@@ -39,6 +39,7 @@ export class App {
   private notice = '';
   private confirm: 'history' | 'calibration' | null = null;
   private persisted: boolean | null = null;
+  private updateReady = false;
 
   constructor(
     private readonly root: HTMLElement,
@@ -52,7 +53,17 @@ export class App {
     await this.showHome();
   }
 
+  /** 新しい版を受け取った。課題の最中は再読み込みせず、ホームに戻ったときに反映する。 */
+  onUpdateReady(): void {
+    this.updateReady = true;
+    if (this.screen === 'home') location.reload();
+  }
+
   private async showHome(): Promise<void> {
+    if (this.updateReady) {
+      location.reload();
+      return;
+    }
     this.flow?.cancel();
     this.flow = null;
     this.screen = 'home';
@@ -431,6 +442,11 @@ export class App {
         h(
           'section',
           {},
+          h(
+            'p',
+            { class: 'aux' },
+            `Version ${__APP_VERSION__}`,
+          ),
           h(
             'p',
             { class: 'aux' },

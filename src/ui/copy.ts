@@ -29,7 +29,13 @@ export const INTRO: Record<StageId, IntroCopy> = {
     title: 'Test',
     body: ['練習と同じ形で15セット行います。計算の正確さも、文字の記憶も、どちらも崩さないようにしてください。'],
   },
-  quick: { title: '', body: [] },
+  quick: {
+    title: 'Math + Letters',
+    body: [
+      'ここから本番です。式を解くたびに、文字が一瞬出ます。これを繰り返し、最後に文字を出てきた順に選びます。',
+      '計算には制限時間があります。過ぎると次へ進み、計算ミスになります。',
+    ],
+  },
 };
 
 export const RECALL_HINT = '出てきた順に選びます。分からない位置は「?」を押します。';

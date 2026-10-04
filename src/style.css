@@ -46,6 +46,9 @@ body {
 
 #app {
   height: 100dvh;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
   display: flex;
   flex-direction: column;
   padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right))
@@ -124,7 +127,12 @@ body {
   color: transparent;
 }
 
-/* 操作は画面の下に集める */
+/* 中断リンクは上に置く（下の操作ボタンの位置を、どの画面でも同じにするため） */
+.quit-bar {
+  min-height: 40px;
+}
+
+/* 操作は画面の下に集める。全画面で同じ高さ・同じ位置 */
 .actions {
   display: flex;
   gap: 12px;

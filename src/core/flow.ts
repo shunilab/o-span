@@ -1,4 +1,4 @@
-import { calibrate, type Calibration } from './calibration';
+import { calibrate, computeTimeLimit, type Calibration } from './calibration';
 import type { Clock } from './clock';
 import { formalPlan, quickSetSizes } from './blocks';
 import type { Rng } from './random';
@@ -40,6 +40,11 @@ export interface MathTally {
   total: number;
 }
 
+/** 計算練習が終わったときのまとめ。timeLimit はこの練習から決まる本番の制限時間（ms）。 */
+export interface PracticeSummary {
+  timeLimit: number | null;
+}
+
 /** 想起の操作説明を出す最初の試行数（原著どおり 3）。 */
 export const RECALL_HINT_TRIALS = 3;
 
@@ -48,7 +53,7 @@ export type FlowView =
   /** recallHint: 想起画面に操作説明を出すか（セッションの最初の 3 回だけ）。 */
   | { kind: 'trial'; stage: StageId; trial: TrialView; recallHint: boolean }
   /** math: このブロックの計算の累積成績（この試行を含む）。 */
-  | { kind: 'feedback'; stage: StageId; record: TrialRecord; math: MathTally }
+  | { kind: 'feedback'; stage: StageId; record: TrialRecord; math: MathTally; summary: PracticeSummary | null }
   | { kind: 'done'; result: FlowResult };
 
 export interface FlowOptions {
@@ -72,7 +77,7 @@ const both = (sizes: number[], limit: number): TrialSpec[] =>
 
 function stagePlans(opts: FlowOptions): StagePlan[] {
   if (opts.calibrationOnly) {
-    return [{ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) }];
+    return [{ id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(15) }];
   }
   if (opts.mode === 'formal') {
     const plan = formalPlan(opts.rng);
@@ -85,17 +90,18 @@ function stagePlans(opts: FlowOptions): StagePlan[] {
         specs: () =>
           plan.lettersPractice.map((setSize) => ({ setSize, math: false, letters: true, timeLimit: null })),
       },
-      { id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
+      { id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
       { id: 'bothPractice', intro: true, feedback: true, scored: false, specs: (limit) => both(plan.bothPractice, limit) },
       { id: 'main', intro: true, feedback: true, scored: true, specs: (limit) => both(plan.main, limit) },
     ];
   }
   const stages: StagePlan[] = [];
   if (opts.timeLimit === null) {
-    stages.push({ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) });
+    stages.push({ id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(15) });
   }
   const sizes = quickSetSizes(opts.reps, opts.rng);
-  stages.push({ id: 'quick', intro: false, feedback: true, scored: true, specs: (limit) => both(sizes, limit) });
+  // 計算練習から入った場合は、複合課題に切り替わる前に説明を出す
+  stages.push({ id: 'quick', intro: opts.timeLimit === null, feedback: true, scored: true, specs: (limit) => both(sizes, limit) });
   return stages;
 }
 
@@ -194,8 +200,13 @@ export class Flow {
     if (record.spec.letters) this.recallTrials++;
     this.stageMath.total += record.math.length;
     this.stageMath.correct += record.math.filter((m) => m.result === 'correct').length;
-    if (stage.feedback) {
-      this.setView({ kind: 'feedback', stage: stage.id, record, math: { ...this.stageMath } });
+    // 計算練習は 1 問ごとには出さず、最後の 1 回だけまとめを出す
+    const summary =
+      stage.id === 'mathPractice' && this.trialIndex === this.specs.length - 1
+        ? { timeLimit: computeTimeLimit(this.practiceRts()) }
+        : null;
+    if (stage.feedback || summary) {
+      this.setView({ kind: 'feedback', stage: stage.id, record, math: { ...this.stageMath }, summary });
     } else this.advance();
   }
 
@@ -213,12 +224,16 @@ export class Flow {
 
   /** 計算練習で正答した試行の反応時間から、本番の制限時間を決める。 */
   private finishCalibration(): void {
-    const rts = this.mathPracticeRecords.flatMap((r) =>
-      r.math.flatMap((m) => (m.result === 'correct' && m.rt !== null ? [m.rt] : [])),
-    );
-    const cal = calibrate(rts, this.mathPracticeRecords.length, new Date());
+    const cal = calibrate(this.practiceRts(), this.mathPracticeRecords.length, new Date());
     this.newCalibration = cal;
     this.timeLimit = cal?.timeLimit ?? FALLBACK_TIME_LIMIT;
+  }
+
+  /** 計算練習で正答した試行の反応時間（ms）。 */
+  private practiceRts(): number[] {
+    return this.mathPracticeRecords.flatMap((r) =>
+      r.math.flatMap((m) => (m.result === 'correct' && m.rt !== null ? [m.rt] : [])),
+    );
   }
 
   private finish(): void {

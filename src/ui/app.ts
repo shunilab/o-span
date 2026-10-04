@@ -1,5 +1,13 @@
 import { realClock } from '../core/clock';
-import { Flow, type FlowResult, type FlowView, type MathTally, type Mode, type StageId } from '../core/flow';
+import {
+  Flow,
+  type FlowResult,
+  type FlowView,
+  type MathTally,
+  type Mode,
+  type PracticeSummary,
+  type StageId,
+} from '../core/flow';
 import { LETTERS } from '../core/letters';
 import { MAX_RECALL, type TrialRecord } from '../core/trial';
 import { Store, requestPersistence, type SessionRecord } from '../storage/store';
@@ -190,7 +198,7 @@ export class App {
       case 'trial':
         return this.renderTrial(flow, v);
       case 'feedback':
-        return this.renderFeedback(flow, v.record, v.math);
+        return this.renderFeedback(flow, v.record, v.math, v.summary);
       case 'done':
         return this.renderDone(v.result);
     }
@@ -202,9 +210,9 @@ export class App {
     return h(
       'main',
       { class: 'screen' },
+      this.quitBar(),
       h('div', { class: 'text' }, h('h1', {}, copy.title), demo, ...copy.body.map((t) => h('p', {}, t))),
       h('div', { class: 'actions' }, button('Start', 'btn btn-main', () => flow.next())),
-      h('div', {}, button('Quit', 'link', () => void this.showHome())),
     );
   }
 
@@ -269,9 +277,28 @@ export class App {
     );
   }
 
-  private renderFeedback(flow: Flow, record: TrialRecord, math: MathTally): HTMLElement {
+  /** 画面の上にだけ置く中断リンク。下の操作ボタンの位置を画面ごとに変えないため。 */
+  private quitBar(): HTMLElement {
+    return h('div', { class: 'quit-bar' }, button('Quit', 'link', () => void this.showHome()));
+  }
+
+  private renderFeedback(flow: Flow, record: TrialRecord, math: MathTally, summary: PracticeSummary | null): HTMLElement {
     const s = record.score;
     const rows: HTMLElement[] = [];
+    if (summary) {
+      // 計算練習のまとめ（15 問が終わったところで 1 回だけ）
+      const p = mathAccuracyPct(math.correct, math.total);
+      if (p !== null) rows.push(kv('Math accuracy', `${p}%`, isLowAccuracy(p)));
+      rows.push(kv('Math errors', `${math.total - math.correct} / ${math.total}`, math.correct < math.total));
+      rows.push(kv('Math time limit', summary.timeLimit === null ? '—' : seconds(summary.timeLimit)));
+      return h(
+        'main',
+        { class: 'screen' },
+        this.quitBar(),
+        h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
+        h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next())),
+      );
+    }
     if (record.spec.letters) rows.push(kv('Letters', `${s.lettersCorrect} / ${s.setSize}`));
     if (record.spec.math) {
       rows.push(kv('Math errors', mathErrorsText(s.speedErrors, s.accuracyErrors), s.speedErrors + s.accuracyErrors > 0));
@@ -281,9 +308,9 @@ export class App {
     return h(
       'main',
       { class: 'screen' },
+      this.quitBar(),
       h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
       h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next())),
-      h('div', {}, button('Quit', 'link', () => void this.showHome())),
     );
   }
 
@@ -454,7 +481,7 @@ export class App {
           ),
         ),
       ),
-      h('div', {}, button('Back', 'link', () => void this.showHome())),
+      h('div', { class: 'actions' }, button('Back', 'btn', () => void this.showHome())),
     );
   }
 

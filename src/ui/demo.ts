@@ -30,6 +30,7 @@ export function demoFor(stage: StageId): HTMLElement | null {
       break;
     case 'bothPractice':
     case 'main':
+    case 'quick':
       items = [formula(), judge(), letter('K'), recall()];
       break;
     default:

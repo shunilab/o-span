@@ -12,7 +12,8 @@ describe('formalPlan', () => {
   const plan = formalPlan(seededRng(3));
 
   it('練習ブロックの構成', () => {
-    expect([...plan.lettersPractice].sort()).toEqual([2, 2, 3, 3]);
+    // 元実装と同じ固定順（入れ替えない）
+    expect(plan.lettersPractice).toEqual([2, 2, 3, 3]);
     expect(plan.mathPracticeCount).toBe(15);
     expect(plan.bothPractice).toEqual([2, 2, 2]);
   });

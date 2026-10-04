@@ -1,12 +1,17 @@
 import { BLANK } from './letters';
 
-/** 計算 1 問の結果。timeout は制限時間切れ（原著の speed error）、wrong は判定ミス（accuracy error）。 */
-export type MathResult = 'correct' | 'wrong' | 'timeout';
+/**
+ * 計算 1 問の結果。判定（True / False）の正否だけで決まる。
+ * 制限時間を過ぎても判定画面に進み、判定が合っていれば correct（元実装 = PsyToolkit と同じ）。
+ */
+export type MathResult = 'correct' | 'wrong';
 
 export interface TrialInput {
   presented: readonly string[];
   recalled: readonly string[];
   math: readonly MathResult[];
+  /** 各問で制限時間を過ぎたか。誤りには数えず、参考として記録する。 */
+  timedOut?: readonly boolean[];
 }
 
 export interface TrialScore {
@@ -14,8 +19,10 @@ export interface TrialScore {
   lettersCorrect: number;
   mathCorrect: number;
   mathTotal: number;
-  speedErrors: number;
-  accuracyErrors: number;
+  /** 計算の誤り（判定ミス）の数。 */
+  mathErrors: number;
+  /** 制限時間を過ぎた問題の数。誤りには数えない。 */
+  timeouts: number;
   /** 計算の誤りが 0 かつ全文字が正しい位置で想起できた。 */
   perfect: boolean;
 }
@@ -29,16 +36,16 @@ export function scoreTrial(trial: TrialInput): TrialScore {
     if (r !== undefined && r !== BLANK && r === presented[i]) lettersCorrect++;
   }
   const mathCorrect = math.filter((m) => m === 'correct').length;
-  const speedErrors = math.filter((m) => m === 'timeout').length;
-  const accuracyErrors = math.filter((m) => m === 'wrong').length;
+  const mathErrors = math.filter((m) => m === 'wrong').length;
+  const timeouts = (trial.timedOut ?? []).filter(Boolean).length;
   return {
     setSize,
     lettersCorrect,
     mathCorrect,
     mathTotal: math.length,
-    speedErrors,
-    accuracyErrors,
-    perfect: lettersCorrect === setSize && speedErrors + accuracyErrors === 0,
+    mathErrors,
+    timeouts,
+    perfect: lettersCorrect === setSize && mathErrors === 0,
   };
 }
 
@@ -55,8 +62,8 @@ export interface SessionScore {
   mathAccuracy: number;
   /** 文字単位の正答率（0〜1）。 */
   letterAccuracy: number;
-  speedErrors: number;
-  accuracyErrors: number;
+  mathErrors: number;
+  timeouts: number;
 }
 
 const ratio = (num: number, den: number): number => (den === 0 ? 0 : num / den);
@@ -73,7 +80,7 @@ export function scoreSession(trials: readonly TrialInput[]): SessionScore {
     perfectRate: ratio(perfectTrials, scores.length),
     mathAccuracy: ratio(sum((s) => s.mathCorrect), sum((s) => s.mathTotal)),
     letterAccuracy: ratio(sum((s) => s.lettersCorrect), sum((s) => s.setSize)),
-    speedErrors: sum((s) => s.speedErrors),
-    accuracyErrors: sum((s) => s.accuracyErrors),
+    mathErrors: sum((s) => s.mathErrors),
+    timeouts: sum((s) => s.timeouts),
   };
 }

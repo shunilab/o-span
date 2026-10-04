@@ -8,6 +8,8 @@ import { scoreTrial, type MathResult, type TrialScore } from './scoring';
 export const LETTER_MS = 800;
 /** 想起で入力できる最大文字数（原著どおり 7）。 */
 export const MAX_RECALL = 7;
+/** 判定（True / False）の制限時間（ms）。元実装は 60 秒で、過ぎると不正解になる。 */
+export const JUDGE_LIMIT_MS = 60_000;
 
 export interface TrialSpec {
   /** 計算の問題数／文字の数（計算のみの試行では 1）。 */
@@ -25,9 +27,12 @@ export type TrialView =
   | { kind: 'recall' };
 
 export interface MathRecord {
+  /** 判定（True / False）の正否だけで決まる。時間切れ自体は誤りにならない。 */
   result: MathResult;
-  /** 式を表示してから「解けた」を押すまでの時間（ms）。時間切れなら null。 */
+  /** 式を表示してから Solved を押すまでの時間（ms）。制限時間を過ぎたら null。 */
   rt: number | null;
+  /** 制限時間を過ぎて、自動で判定画面に進んだか。参考情報で、採点には使わない。 */
+  timedOut: boolean;
 }
 
 export interface TrialRecord {
@@ -83,17 +88,17 @@ export class TrialRunner {
     this.clearTimer();
   }
 
-  /** 「解けた」。計算画面でのみ有効。 */
+  /** Solved。計算画面でのみ有効。 */
   solved(): void {
     if (this.finished || this.view.kind !== 'math' || !this.problem) return;
     this.clearTimer();
-    this.math.push({ result: 'wrong', rt: this.deps.clock.now() - this.shownAt });
-    this.setView({ kind: 'judge', shown: this.problem.shown });
+    this.toJudge({ result: 'wrong', rt: this.deps.clock.now() - this.shownAt, timedOut: false });
   }
 
   /** True / False の判定。判定画面でのみ有効。 */
   judge(saidTrue: boolean): void {
     if (this.finished || this.view.kind !== 'judge' || !this.problem) return;
+    this.clearTimer();
     const last = this.math[this.math.length - 1];
     if (last) last.result = saidTrue === this.problem.isTrue ? 'correct' : 'wrong';
     this.afterMath();
@@ -118,11 +123,28 @@ export class TrialRunner {
     }
   }
 
-  /** 制限時間切れ。誤り（speed error）として数え、判定を飛ばして先へ進む。 */
+  /**
+   * 制限時間切れ。元実装と同じく、強制的に判定画面へ進める（判定は選べる）。
+   * 時間切れ自体は誤りにならず、正否は判定だけで決まる。
+   */
   private timeout(): void {
     if (this.finished || this.view.kind !== 'math') return;
     this.cancelTimer = null;
-    this.math.push({ result: 'timeout', rt: null });
+    this.toJudge({ result: 'wrong', rt: null, timedOut: true });
+  }
+
+  /** 判定画面に進む。判定には 60 秒の制限があり、過ぎると不正解で先へ進む。 */
+  private toJudge(record: MathRecord): void {
+    if (!this.problem) return;
+    this.math.push(record);
+    this.setView({ kind: 'judge', shown: this.problem.shown });
+    this.cancelTimer = this.deps.clock.after(JUDGE_LIMIT_MS, () => this.judgeTimeout());
+  }
+
+  private judgeTimeout(): void {
+    if (this.finished || this.view.kind !== 'judge') return;
+    this.cancelTimer = null;
+    // 結果はすでに 'wrong'（不正解）で入っている
     this.afterMath();
   }
 
@@ -160,6 +182,7 @@ export class TrialRunner {
       presented: this.presented,
       recalled,
       math: this.math.map((m) => m.result),
+      timedOut: this.math.map((m) => m.timedOut),
     });
     this.deps.onDone({
       spec: this.spec,

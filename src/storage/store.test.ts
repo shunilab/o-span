@@ -23,8 +23,8 @@ const session = (mode: 'quick' | 'formal', at: string, score = 10): Omit<Session
     perfectRate: 0.4,
     mathAccuracy: 0.95,
     letterAccuracy: 0.9,
-    speedErrors: 0,
-    accuracyErrors: 1,
+    mathErrors: 1,
+    timeouts: 0,
   },
   trials: [],
 });

@@ -78,12 +78,6 @@ export function mathAccuracyPct(correct: number, total: number): number | null {
 
 export const isLowAccuracy = (p: number | null): boolean => p !== null && p < MATH_ACCURACY_FLOOR;
 
-/** 計算ミスの表示。時間切れがあれば内訳を添える。例: `1（speed 1）` */
-export function mathErrorsText(speed: number, accuracy: number): string {
-  const total = speed + accuracy;
-  return speed > 0 ? `${total}（speed ${speed}）` : String(total);
-}
-
 export const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
 
 export const SETUP_INTRO = {

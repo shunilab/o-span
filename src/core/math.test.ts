@@ -31,11 +31,12 @@ describe('generateProblem', () => {
     expect(problems.every((p) => /^\(\d+ [×÷] [12]\) [+−] [1-5] = \?$/.test(p.text))).toBe(true);
   });
 
-  it('a は 2,4,6,8,10 がほぼ一様に出る', () => {
+  it('a は 2,4,6,8,10 のどれか。両端（2 と 10）は元実装と同じく出にくい', () => {
     const counts = new Map<number, number>();
     for (const p of problems) counts.set(p.a, (counts.get(p.a) ?? 0) + 1);
     expect([...counts.keys()].sort((x, y) => x - y)).toEqual([2, 4, 6, 8, 10]);
-    // 答えの範囲による棄却があるので完全には一様でないが、両端が極端に少なくはならない
-    for (const n of counts.values()) expect(n).toBeGreaterThan(problems.length * 0.1);
+    // 添字を round(random × 4) で選ぶので、両端は中央（6）より少ない
+    expect(counts.get(2) as number).toBeLessThan(counts.get(6) as number);
+    expect(counts.get(10) as number).toBeLessThan(counts.get(6) as number);
   });
 });

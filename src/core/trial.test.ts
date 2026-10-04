@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from './fakeClock';
 import { seededRng } from './random';
-import { LETTER_MS, TrialRunner, type TrialRecord, type TrialSpec } from './trial';
+import { JUDGE_LIMIT_MS, LETTER_MS, TrialRunner, type TrialRecord, type TrialSpec } from './trial';
 
 function setup(spec: TrialSpec) {
   const clock = new FakeClock();
@@ -46,29 +46,54 @@ describe('TrialRunner（計算＋文字）', () => {
     expect(record()?.math.map((m) => m.rt)).toEqual([1200, 1200, 1200]);
   });
 
-  it('制限時間を過ぎると誤答(timeout)として数え、判定を飛ばして文字へ進む', () => {
-    const { clock, runner, record } = setup(spec);
+  it('制限時間を過ぎると、強制的に判定画面へ進む（元実装と同じ）', () => {
+    const { clock, runner } = setup(spec);
     runner.start();
     clock.advance(2999);
     expect(runner.view.kind).toBe('math');
     clock.advance(1);
-    expect(runner.view.kind).toBe('letter');
-    // 時間切れ後の「解けた」は無視される
+    expect(runner.view.kind).toBe('judge');
+    // 時間切れ後の Solved は無視される
     runner.solved();
+    expect(runner.view.kind).toBe('judge');
+  });
+
+  it('時間切れのあとも判定は選べる。判定が合っていれば正答で、誤りにならない', () => {
+    const { clock, runner, record } = setup({ ...spec, setSize: 1 });
+    runner.start();
+    clock.advance(3000); // 時間切れ → 判定画面
+    expect(runner.view.kind).toBe('judge');
+    runner.judge(runner.currentProblem?.isTrue ?? false); // 正しく判定
     expect(runner.view.kind).toBe('letter');
-    for (let i = 0; i < 2; i++) {
-      clock.advance(LETTER_MS);
-      clock.advance(3000);
-    }
     clock.advance(LETTER_MS);
-    expect(runner.view.kind).toBe('recall');
     runner.submit(runner.presented);
     const r = record();
-    expect(r?.math.map((m) => m.result)).toEqual(['timeout', 'timeout', 'timeout']);
-    expect(r?.score.speedErrors).toBe(3);
-    // 文字が全部合っていても、時間切れがあれば完全正答にならない
-    expect(r?.score.lettersCorrect).toBe(3);
-    expect(r?.score.perfect).toBe(false);
+    expect(r?.math[0]).toMatchObject({ result: 'correct', rt: null, timedOut: true });
+    expect(r?.score).toMatchObject({ mathErrors: 0, timeouts: 1, perfect: true });
+  });
+
+  it('時間切れのあとに判定を間違えたら、その判定ミスが誤りになる', () => {
+    const { clock, runner, record } = setup({ ...spec, setSize: 1 });
+    runner.start();
+    clock.advance(3000);
+    runner.judge(!(runner.currentProblem?.isTrue ?? false)); // 間違った判定
+    clock.advance(LETTER_MS);
+    runner.submit(runner.presented);
+    expect(record()?.score).toMatchObject({ mathErrors: 1, timeouts: 1, perfect: false });
+  });
+
+  it('判定を 60 秒放置すると不正解になって先へ進む（元実装と同じ）', () => {
+    const { clock, runner, record } = setup({ ...spec, setSize: 1 });
+    runner.start();
+    clock.advance(1000);
+    runner.solved();
+    clock.advance(JUDGE_LIMIT_MS - 1);
+    expect(runner.view.kind).toBe('judge');
+    clock.advance(1);
+    expect(runner.view.kind).toBe('letter');
+    clock.advance(LETTER_MS);
+    runner.submit(runner.presented);
+    expect(record()?.math[0]).toMatchObject({ result: 'wrong', timedOut: false });
   });
 
   it('「解けた」を押すと制限時間のタイマーが止まる', () => {
@@ -92,7 +117,7 @@ describe('TrialRunner（計算＋文字）', () => {
     expect(record()?.score).toMatchObject({ mathCorrect: 3, lettersCorrect: 3, perfect: true });
   });
 
-  it('判定を間違えると accuracy error になる', () => {
+  it('判定を間違えると計算の誤りになる', () => {
     const { clock, runner, record } = setup({ ...spec, setSize: 1 });
     runner.start();
     clock.advance(500);
@@ -100,7 +125,7 @@ describe('TrialRunner（計算＋文字）', () => {
     runner.judge(!(runner.currentProblem?.isTrue ?? false));
     clock.advance(LETTER_MS);
     runner.submit(runner.presented);
-    expect(record()?.score).toMatchObject({ accuracyErrors: 1, speedErrors: 0, perfect: false });
+    expect(record()?.score).toMatchObject({ mathErrors: 1, timeouts: 0, perfect: false });
   });
 
   it('想起は 7 文字までで切り捨てる', () => {

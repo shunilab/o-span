@@ -15,7 +15,8 @@ export interface FormalPlan {
 
 export function formalPlan(rng: Rng): FormalPlan {
   return {
-    lettersPractice: shuffle(rng, [2, 2, 3, 3]),
+    // 元実装は順番を入れ替えない（2, 2, 3, 3 の固定）
+    lettersPractice: [2, 2, 3, 3],
     mathPracticeCount: 15,
     bothPractice: [2, 2, 2],
     main: shuffle(rng, Array.from({ length: 3 }, () => [...MAIN_SET_SIZES]).flat()),

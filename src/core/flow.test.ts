@@ -68,11 +68,15 @@ describe('Flow クイックモード（キャリブレーション済み）', ()
     }
   });
 
-  it('制限時間は保存済みの値が使われ、時間切れは speed error になる', () => {
+  it('制限時間は保存済みの値が使われ、時間切れで判定画面へ進む（判定は選べる）', () => {
     const { flow, clock } = make({ timeLimit: 2000 });
     flow.start();
-    // 何も押さずに 2 秒待つ → 時間切れで文字へ
-    clock.advance(2000);
+    // 何も押さずに 2 秒待つ → 強制的に判定画面へ
+    clock.advance(1999);
+    expect(kindOf(flow.view)).toBe('trial:math');
+    clock.advance(1);
+    expect(kindOf(flow.view)).toBe('trial:judge');
+    flow.judge(true);
     expect(kindOf(flow.view)).toBe('trial:letter');
   });
 });
@@ -238,7 +242,8 @@ describe('Flow Setup（練習を 1 つだけ単独で行う）', () => {
     clock.advance(1999);
     expect(kindOf(flow.view)).toBe('trial:math');
     clock.advance(1);
-    expect(kindOf(flow.view)).toBe('trial:letter');
+    expect(kindOf(flow.view)).toBe('trial:judge');
+    flow.judge(true);
     runToEnd(flow, clock, 500);
     expect(done).toHaveLength(1);
     expect(done[0]).toMatchObject({ stage: 'bothPractice', calibration: null });

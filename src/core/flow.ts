@@ -298,7 +298,12 @@ export class Flow {
       practice: this.opts.mode === 'setup' ? this.lastStageDone : null,
       trials: this.scored,
       session: scoreSession(
-        this.scored.map((r) => ({ presented: r.presented, recalled: r.recalled, math: r.math.map((m) => m.result) })),
+        this.scored.map((r) => ({
+          presented: r.presented,
+          recalled: r.recalled,
+          math: r.math.map((m) => m.result),
+          timedOut: r.math.map((m) => m.timedOut),
+        })),
       ),
       timeLimit: this.timeLimit,
       calibration: this.newCalibration,

@@ -22,7 +22,6 @@ import {
   dateTime,
   isLowAccuracy,
   mathAccuracyPct,
-  mathErrorsText,
   pct,
   relativeDay,
   seconds,
@@ -523,7 +522,9 @@ export class App {
     }
     if (record.spec.letters) rows.push(kv('Letters', `${s.lettersCorrect} / ${s.setSize}`));
     if (record.spec.math) {
-      rows.push(kv('Math errors', mathErrorsText(s.speedErrors, s.accuracyErrors), s.speedErrors + s.accuracyErrors > 0));
+      rows.push(kv('Math errors', String(s.mathErrors), s.mathErrors > 0));
+      // 時間切れは誤りではないので、警告色にせず参考として出す
+      if (s.timeouts > 0) rows.push(kv('Timed out', String(s.timeouts)));
       const p = mathAccuracyPct(math.correct, math.total);
       if (p !== null) rows.push(kv('Math accuracy', `${p}%`, isLowAccuracy(p)));
     }
@@ -552,8 +553,8 @@ export class App {
           kv('Math accuracy', `${p}%`, isLowAccuracy(p)),
           kv('Letter recall', `${pct(s.letterAccuracy)}%`),
           kv('Perfect sets', `${s.perfectTrials} / ${s.trials}`),
-          kv('Speed errors', String(s.speedErrors), s.speedErrors > 0),
-          kv('Accuracy errors', String(s.accuracyErrors), s.accuracyErrors > 0),
+          kv('Math errors', String(s.mathErrors), s.mathErrors > 0),
+          kv('Timed out', String(s.timeouts)),
         ),
         r.calibration ? h('p', { class: 'muted' }, `Math time limit updated: ${seconds(r.timeLimit)}`) : null,
       );

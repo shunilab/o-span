@@ -1,9 +1,12 @@
-/** 制限時間の係数。原著（Unsworth et al., 2005）は 2.5 SD（PsyToolkit は 2 SD）。 */
-export const TIME_LIMIT_SD = 2.5;
+/**
+ * 制限時間の係数。元実装（PsyToolkit）は平均 + 2 SD。
+ * 原著論文（Unsworth et al., 2005）は 2.5 SD だが、これまで測ってきた PsyToolkit に合わせる。
+ */
+export const TIME_LIMIT_SD = 2;
 
 /**
  * 計算練習で正答した試行の反応時間（ms）から、本番の制限時間（ms）を求める。
- * 制限時間 = round(平均 + 2.5 × 母標準偏差)。正答が 1 件もなければ null。
+ * 制限時間 = round(平均 + 2 × 母標準偏差)。正答が 1 件もなければ null。
  */
 export function computeTimeLimit(correctRts: readonly number[]): number | null {
   const n = correctRts.length;

@@ -26,11 +26,11 @@ function evaluate(a: number, op1: '×' | '÷', b: number, op2: '+' | '−', c: n
 
 /**
  * `(a op1 b) op2 c` の問題を作る。答えが 1〜9 に収まるまで作り直す。
- * 元実装（PsyToolkit）は a の選び方が両端に偏るが、ここでは一様にする。
+ * a の選び方は元実装と同じ（`round(random × 4)` で添字を選ぶので、両端の 2 と 10 は半分の確率）。
  */
 export function generateProblem(rng: Rng): MathProblem {
   for (;;) {
-    const a = pick(rng, A_VALUES);
+    const a = A_VALUES[Math.round(rng() * (A_VALUES.length - 1))] as number;
     const op1 = pick(rng, ['×', '÷'] as const);
     const b = pick(rng, B_VALUES);
     const op2 = pick(rng, ['+', '−'] as const);

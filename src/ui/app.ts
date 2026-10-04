@@ -1,14 +1,30 @@
-import { Flow, type FlowResult, type FlowView, type Mode } from '../core/flow';
 import { realClock } from '../core/clock';
-import { MAX_RECALL } from '../core/trial';
+import { Flow, type FlowResult, type FlowView, type MathTally, type Mode, type StageId } from '../core/flow';
 import { LETTERS } from '../core/letters';
+import { MAX_RECALL, type TrialRecord } from '../core/trial';
 import { Store, requestPersistence, type SessionRecord } from '../storage/store';
+import {
+  INTRO,
+  RECALL_HINT,
+  dateTime,
+  isLowAccuracy,
+  mathAccuracyPct,
+  mathErrorsText,
+  pct,
+  relativeDay,
+  seconds,
+} from './copy';
+import { demoFor } from './demo';
 import { button, h } from './dom';
-import { INTRO, mathErrorsText, pct, relativeDay, shortDate } from './copy';
 
 type Screen = 'home' | 'flow' | 'settings';
 
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+/** 左に項目名、右に値。warn なら値を警告色にする。 */
+function kv(label: string, value: string, warn = false): HTMLElement {
+  return h('div', { class: 'kv' }, h('span', { class: 'kv-label' }, label), h('span', { class: warn ? 'kv-value error' : 'kv-value' }, value));
+}
 
 export class App {
   private screen: Screen = 'home';
@@ -57,7 +73,7 @@ export class App {
 
   private renderHome(): HTMLElement {
     const last = this.lastQuick;
-    const circle = h('button', { class: 'aperture aperture-start', type: 'button', ariaLabel: '開始' }, '開始');
+    const circle = h('button', { class: 'aperture aperture-start', type: 'button' }, 'Start');
     circle.onclick = () => {
       if (circle.classList.contains('expanding')) return;
       const go = () => this.startFlow('quick');
@@ -74,25 +90,25 @@ export class App {
       h(
         'div',
         { class: 'home-top' },
-        h(
-          'p',
-          { class: 'aux' },
-          last
-            ? `前回 ${relativeDay(last.at)}　${last.score.score} / ${last.score.maxScore}点`
-            : 'まだ記録がありません',
-        ),
+        last
+          ? kv(`前回 ${relativeDay(last.at)}`, `${last.score.score} / ${last.score.maxScore}`)
+          : h('p', { class: 'aux' }, 'まだ記録がありません'),
       ),
       h(
         'div',
         { class: 'home-middle' },
         circle,
-        this.calibration ? null : h('p', { class: 'aux' }, '初回は計算練習から始まります（約2分）'),
+        h(
+          'p',
+          { class: 'aux' },
+          this.calibration ? `Time limit ${seconds(this.calibration.timeLimit)}` : '初回は計算練習から始まります（約2分）',
+        ),
       ),
       h(
         'div',
-        { class: 'home-bottom' },
-        button('正式測定', 'link', () => this.startFlow('formal')),
-        button('設定', 'link', () => {
+        { class: 'actions' },
+        button('Formal test', 'btn', () => this.startFlow('formal')),
+        button('Settings', 'btn', () => {
           this.notice = '';
           this.confirm = null;
           void this.showSettings();
@@ -161,33 +177,35 @@ export class App {
       case 'intro':
         return this.renderIntro(flow, v.stage);
       case 'trial':
-        return this.renderTrial(flow, v.trial);
+        return this.renderTrial(flow, v);
       case 'feedback':
-        return this.renderFeedback(flow, v);
+        return this.renderFeedback(flow, v.record, v.math);
       case 'done':
         return this.renderDone(v.result);
     }
   }
 
-  private renderIntro(flow: Flow, stage: keyof typeof INTRO): HTMLElement {
+  private renderIntro(flow: Flow, stage: StageId): HTMLElement {
     const copy = INTRO[stage];
+    const demo = demoFor(stage);
     return h(
       'main',
       { class: 'screen' },
-      h('div', { class: 'text' }, h('h1', {}, copy.title), ...copy.body.map((t) => h('p', {}, t))),
-      h('div', { class: 'actions' }, button('始める', 'btn btn-main', () => flow.next())),
-      h('div', {}, button('やめる', 'link', () => void this.showHome())),
+      h('div', { class: 'text' }, h('h1', {}, copy.title), demo, ...copy.body.map((t) => h('p', {}, t))),
+      h('div', { class: 'actions' }, button('Start', 'btn btn-main', () => flow.next())),
+      h('div', {}, button('Quit', 'link', () => void this.showHome())),
     );
   }
 
-  private renderTrial(flow: Flow, trial: Extract<FlowView, { kind: 'trial' }>['trial']): HTMLElement {
+  private renderTrial(flow: Flow, v: Extract<FlowView, { kind: 'trial' }>): HTMLElement {
+    const trial = v.trial;
     switch (trial.kind) {
       case 'math':
         return h(
           'main',
           { class: 'screen' },
           h('div', { class: 'stage' }, h('div', { class: 'formula' }, trial.text)),
-          h('div', { class: 'actions' }, button('解けた', 'btn', () => flow.solved())),
+          h('div', { class: 'actions' }, button('Solved', 'btn btn-main', () => flow.solved())),
         );
       case 'judge':
         return h(
@@ -197,8 +215,8 @@ export class App {
           h(
             'div',
             { class: 'actions' },
-            button('正しい', 'btn', () => flow.judge(true)),
-            button('違う', 'btn', () => flow.judge(false)),
+            button('True', 'btn', () => flow.judge(true)),
+            button('False', 'btn', () => flow.judge(false)),
           ),
         );
       case 'letter':
@@ -208,11 +226,11 @@ export class App {
           h('div', { class: 'stage' }, h('div', { class: 'aperture' }, h('span', { class: 'aperture-letter' }, trial.letter))),
         );
       case 'recall':
-        return this.renderRecall(flow);
+        return this.renderRecall(flow, v.recallHint);
     }
   }
 
-  private renderRecall(flow: Flow): HTMLElement {
+  private renderRecall(flow: Flow, hint: boolean): HTMLElement {
     const entered = h('div', { class: 'entered', ariaLabel: '入力した文字' });
     const draw = () => entered.replaceChildren(...this.entered.map((c) => h('span', {}, c)));
     draw();
@@ -221,39 +239,40 @@ export class App {
       this.entered.push(c);
       draw();
     };
-    const grid = h('div', { class: 'grid' }, ...LETTERS.map((c) => button(c, 'key', () => add(c))));
     return h(
       'main',
       { class: 'screen' },
-      entered,
-      h('div', { class: 'recall-space' }),
-      grid,
+      h('p', { class: 'aux recall-hint' }, hint ? RECALL_HINT : ''),
+      h('div', { class: 'stage' }, entered),
+      h('div', { class: 'grid' }, ...LETTERS.map((c) => button(c, 'key', () => add(c)))),
       h(
         'div',
         { class: 'actions' },
-        button('空欄', 'btn', () => add('?')),
-        button('消す', 'btn', () => {
+        button('?', 'btn', () => add('?')),
+        button('Clear', 'btn', () => {
           this.entered.pop();
           draw();
         }),
-        button('決定', 'btn btn-main', () => flow.submit(this.entered)),
+        button('Enter', 'btn btn-main', () => flow.submit(this.entered)),
       ),
     );
   }
 
-  private renderFeedback(flow: Flow, v: Extract<FlowView, { kind: 'feedback' }>): HTMLElement {
-    const s = v.record.score;
-    const lines = [h('p', {}, `${s.setSize}文字中${s.lettersCorrect}文字正解`)];
-    if (v.record.spec.math) {
-      const errs = s.speedErrors + s.accuracyErrors;
-      lines.push(h('p', { class: errs > 0 ? 'error' : 'muted' }, mathErrorsText(s.speedErrors, s.accuracyErrors)));
+  private renderFeedback(flow: Flow, record: TrialRecord, math: MathTally): HTMLElement {
+    const s = record.score;
+    const rows: HTMLElement[] = [];
+    if (record.spec.letters) rows.push(kv('Letters', `${s.lettersCorrect} / ${s.setSize}`));
+    if (record.spec.math) {
+      rows.push(kv('Math errors', mathErrorsText(s.speedErrors, s.accuracyErrors), s.speedErrors + s.accuracyErrors > 0));
+      const p = mathAccuracyPct(math.correct, math.total);
+      if (p !== null) rows.push(kv('Math accuracy', `${p}%`, isLowAccuracy(p)));
     }
     return h(
       'main',
       { class: 'screen' },
-      h('div', { class: 'text' }, ...lines),
-      h('div', { class: 'actions' }, button('次へ', 'btn btn-main', () => flow.next())),
-      h('div', {}, button('やめる', 'link', () => void this.showHome())),
+      h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
+      h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next())),
+      h('div', {}, button('Quit', 'link', () => void this.showHome())),
     );
   }
 
@@ -261,25 +280,27 @@ export class App {
     const body: (HTMLElement | null)[] = [];
     if (this.calibrationOnly) {
       body.push(
+        r.calibration ? h('h1', {}, 'Time limit updated') : h('h1', {}, 'Time limit not updated'),
         r.calibration
-          ? h('h1', {}, '制限時間を更新しました')
-          : h('h1', {}, '制限時間を取れませんでした'),
-        r.calibration
-          ? h('p', {}, `計算の制限時間は ${(r.timeLimit / 1000).toFixed(1)} 秒です。`)
+          ? h('div', { class: 'kv-list' }, kv('Math time limit', seconds(r.timeLimit)))
           : h('p', {}, '計算の正答がなかったため、更新していません。もう一度やり直してください。'),
       );
     } else {
       const s = r.session;
-      const errs = s.speedErrors + s.accuracyErrors;
+      const p = pct(s.mathAccuracy);
       body.push(
-        h('div', { class: 'big' }, `${s.score} / ${s.maxScore}点`),
-        h('p', {}, `完全正答 ${s.perfectTrials} / ${s.trials}回`),
-        h('p', {}, `計算の正答率 ${pct(s.mathAccuracy)}%`),
-        h('p', {}, `文字の正答率 ${pct(s.letterAccuracy)}%`),
-        errs > 0 ? h('p', { class: 'error' }, mathErrorsText(s.speedErrors, s.accuracyErrors)) : null,
-        r.calibration
-          ? h('p', { class: 'muted' }, `計算の制限時間を ${(r.timeLimit / 1000).toFixed(1)} 秒に更新しました。`)
-          : null,
+        h('div', { class: 'big' }, `${s.score} / ${s.maxScore}`),
+        h('p', { class: 'muted result-caption' }, 'O-Span'),
+        h(
+          'div',
+          { class: 'kv-list' },
+          kv('Math accuracy', `${p}%`, isLowAccuracy(p)),
+          kv('Letter recall', `${pct(s.letterAccuracy)}%`),
+          kv('Perfect sets', `${s.perfectTrials} / ${s.trials}`),
+          kv('Speed errors', String(s.speedErrors), s.speedErrors > 0),
+          kv('Accuracy errors', String(s.accuracyErrors), s.accuracyErrors > 0),
+        ),
+        r.calibration ? h('p', { class: 'muted' }, `Math time limit updated: ${seconds(r.timeLimit)}`) : null,
       );
     }
     if (this.saveError) body.push(h('p', { class: 'error' }, '保存できませんでした。この結果は残りません。'));
@@ -287,7 +308,7 @@ export class App {
       'main',
       { class: 'screen' },
       h('div', { class: 'text' }, ...body),
-      h('div', { class: 'actions' }, button('ホームへ', 'btn btn-main', () => void this.showHome())),
+      h('div', { class: 'actions' }, button('Home', 'btn btn-main', () => void this.showHome())),
     );
   }
 
@@ -296,7 +317,7 @@ export class App {
   private async showSettings(): Promise<void> {
     this.flow?.cancel();
     this.screen = 'settings';
-    [this.calibration] = await Promise.all([this.store.getCalibration()]);
+    this.calibration = await this.store.getCalibration();
     this.render();
   }
 
@@ -314,7 +335,7 @@ export class App {
             this.render();
           },
         },
-        `${n * 5}回`,
+        `${n * 5} sets`,
       ),
     );
     const cal = this.calibration;
@@ -324,23 +345,16 @@ export class App {
 
     const sessionsEl = h('div', {}, h('p', { class: 'muted' }, '読み込み中…'));
     void this.store.listSessions().then((all) => {
-      const recent = (mode: Mode) => all.filter((s) => s.mode === mode).slice(0, 5);
       const list = (mode: Mode, label: string) => {
-        const items = recent(mode);
+        const items = all.filter((s) => s.mode === mode);
         return h(
           'div',
-          {},
-          h('p', { class: 'muted' }, `${label}（全${all.filter((s) => s.mode === mode).length}回）`),
-          items.length
-            ? h(
-                'ul',
-                { class: 'history' },
-                ...items.map((s) => h('li', {}, h('span', {}, shortDate(s.at)), h('span', {}, `${s.score.score} / ${s.score.maxScore}点`))),
-              )
-            : null,
+          { class: 'history' },
+          h('p', { class: 'muted' }, `${label}（${items.length}回）`),
+          ...items.slice(0, 5).map((s) => kv(dateTime(s.at), `${s.score.score} / ${s.score.maxScore}`)),
         );
       };
-      sessionsEl.replaceChildren(list('quick', 'クイック'), list('formal', '正式'));
+      sessionsEl.replaceChildren(list('quick', 'Quick'), list('formal', 'Formal'));
     });
 
     const dangerChip = (key: 'history' | 'calibration', label: string, run: () => Promise<void>) =>
@@ -359,7 +373,7 @@ export class App {
             void run().then(() => this.showSettings());
           },
         },
-        this.confirm === key ? 'もう一度押して実行' : label,
+        this.confirm === key ? 'Tap again' : label,
       );
 
     return h(
@@ -368,36 +382,51 @@ export class App {
       h(
         'div',
         { class: 'settings scroll' },
-        h('section', {}, h('h2', {}, 'クイックの長さ'), h('div', { class: 'row' }, ...reps)),
+        h('section', {}, h('h2', {}, 'Quick session'), h('div', { class: 'row' }, ...reps)),
         h(
           'section',
           {},
-          h('h2', {}, '計算の制限時間'),
-          h('p', {}, cal ? `${(cal.timeLimit / 1000).toFixed(1)} 秒（${shortDate(cal.at)} に計測）` : '未設定'),
-          h(
-            'div',
-            { class: 'row' },
-            button('やり直す', 'chip', () => this.startFlow('quick', true)),
-            cal ? dangerChip('calibration', 'リセット', () => this.store.clearCalibration()) : null,
-          ),
+          h('h2', {}, 'Math time limit'),
+          cal
+            ? h(
+                'div',
+                { class: 'kv-list' },
+                kv('Limit', seconds(cal.timeLimit)),
+                kv('Mean', seconds(cal.mean)),
+                kv('SD', seconds(cal.sd)),
+                kv('Measured', dateTime(cal.at)),
+              )
+            : h('p', { class: 'muted' }, '未設定。次のクイックの前に計算練習を行います。'),
+          h('div', { class: 'row' }, button('Recalibrate', 'chip', () => this.startFlow('quick', true))),
         ),
-        h('section', {}, h('h2', {}, '成績'), sessionsEl, h('div', { class: 'row' }, dangerChip('history', '履歴を削除', () => this.store.clearSessions()))),
+        h('section', {}, h('h2', {}, 'History'), sessionsEl),
         h(
           'section',
           {},
-          h('h2', {}, 'データ'),
+          h('h2', {}, 'Data'),
           h('p', { class: 'muted' }, 'この端末の中だけに保存しています。書き出しておくと、端末を変えても引き継げます。'),
           h(
             'div',
             { class: 'row' },
-            button('書き出す', 'chip', () => void this.exportFile()),
-            button('読み込む', 'chip', () => file.click()),
+            button('Export', 'chip', () => void this.exportFile()),
+            button('Import', 'chip', () => file.click()),
           ),
           file,
           this.notice ? h('p', { class: 'muted' }, this.notice) : null,
           this.persisted === false
             ? h('p', { class: 'muted' }, 'ホーム画面に追加して使うと、保存したデータが消えにくくなります。')
             : null,
+        ),
+        h(
+          'section',
+          { class: 'danger-zone' },
+          h('h2', {}, 'Reset'),
+          h(
+            'div',
+            { class: 'row' },
+            cal ? dangerChip('calibration', 'Reset time limit', () => this.store.clearCalibration()) : null,
+            dangerChip('history', 'Delete history', () => this.store.clearSessions()),
+          ),
         ),
         h(
           'section',
@@ -409,7 +438,7 @@ export class App {
           ),
         ),
       ),
-      h('div', {}, button('戻る', 'link', () => void this.showHome())),
+      h('div', {}, button('Back', 'link', () => void this.showHome())),
     );
   }
 

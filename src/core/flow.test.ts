@@ -91,8 +91,10 @@ describe('Flow クイックモード（キャリブレーションなし）', ()
       clock.advance(1500);
       flow.solved();
       flow.judge(true);
+      // 計算練習も 1 問ごとにフィードバックを出し、タップで次へ進む
+      expect(flow.view.kind).toBe('feedback');
+      flow.next();
     }
-    // 計算練習にはフィードバックがなく、そのまま本番の最初の計算に入る
     expect(kindOf(flow.view)).toBe('trial:math');
     if (flow.view.kind === 'trial') expect(flow.view.stage).toBe('quick');
     // 制限時間は 正答の反応時間(1500ms 固定、SD 0)＝1500ms 付近。正答がなければ fallback
@@ -144,6 +146,64 @@ describe('Flow 正式モード', () => {
   });
 });
 
+describe('Flow フィードバック', () => {
+  it('計算練習の累積正答率は、1 問ごとに増えていく', () => {
+    const { flow, clock } = make({ timeLimit: null });
+    flow.start();
+    flow.next();
+    const totals: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      clock.advance(1000);
+      flow.solved();
+      flow.judge(true);
+      if (flow.view.kind === 'feedback') {
+        totals.push(flow.view.math.total);
+        expect(flow.view.math.correct).toBeLessThanOrEqual(flow.view.math.total);
+      }
+      flow.next();
+    }
+    expect(totals).toEqual([1, 2, 3]);
+  });
+
+  it('累積はブロックごとに数え直す（正式モードの複合練習と本番）', () => {
+    const { flow, clock } = make({ mode: 'formal', timeLimit: null });
+    flow.start();
+    const lastTotal: Record<string, number> = {};
+    let guard = 0;
+    while (flow.view.kind !== 'done' && guard++ < 500) {
+      if (flow.view.kind === 'intro') flow.next();
+      else if (flow.view.kind === 'feedback') {
+        lastTotal[flow.view.stage] = flow.view.math.total;
+        flow.next();
+      } else playTrial(flow, clock, 1000);
+    }
+    expect(lastTotal.bothPractice).toBe(6); // 2+2+2 問
+    expect(lastTotal.main).toBe(75); // 3+4+5+6+7 を 3 回
+    expect(lastTotal.mathPractice).toBe(15);
+    expect(lastTotal.lettersPractice).toBe(0);
+  });
+
+  it('想起の操作説明は、セッションの最初の 3 回だけ出す', () => {
+    const { flow, clock } = make();
+    flow.start();
+    const hints: boolean[] = [];
+    let guard = 0;
+    while (flow.view.kind !== 'done' && guard++ < 500) {
+      const v = flow.view;
+      if (v.kind === 'feedback') flow.next();
+      else if (v.kind === 'trial' && v.trial.kind === 'recall') {
+        hints.push(v.recallHint);
+        flow.submit([]);
+      } else if (v.kind === 'trial' && v.trial.kind === 'math') {
+        clock.advance(500);
+        flow.solved();
+      } else if (v.kind === 'trial' && v.trial.kind === 'judge') flow.judge(true);
+      else if (v.kind === 'trial') clock.advance(LETTER_MS);
+    }
+    expect(hints).toEqual([true, true, true, false, false]);
+  });
+});
+
 describe('Flow キャリブレーションのみ', () => {
   it('計算練習 15 問だけ行い、制限時間を取って終わる（得点なし）', () => {
     const { flow, clock } = make({ calibrationOnly: true, timeLimit: 9999 });
@@ -154,6 +214,7 @@ describe('Flow キャリブレーションのみ', () => {
       clock.advance(1500);
       flow.solved();
       flow.judge(true);
+      flow.next();
     }
     expect(flow.view.kind).toBe('done');
     if (flow.view.kind === 'done') {

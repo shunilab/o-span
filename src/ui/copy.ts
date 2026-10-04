@@ -5,31 +5,37 @@ export interface IntroCopy {
   body: string[];
 }
 
+/** 課題の用語は英語、説明文は日本語。 */
 export const INTRO: Record<StageId, IntroCopy> = {
   lettersPractice: {
-    title: '文字の練習',
-    body: ['文字が1つずつ出ます。', '順番に覚えて、最後に出てきた順に選んでください。'],
+    title: 'Letters practice',
+    body: ['文字が1つずつ出ます。順番に覚えて、最後に出てきた順に選んでください。'],
   },
   mathPractice: {
-    title: '計算の練習',
+    title: 'Math practice',
     body: [
-      '計算式が出ます。解けたら「解けた」を押し、次に出る数字が答えと合っているかを選んでください。',
+      '式が出ます。解けたら Solved を押し、次に出る数字が答えと合っているかを True / False で答えます。',
       'この練習の速さをもとに、本番の制限時間が決まります。ふだんの速さで進めてください。',
     ],
   },
   bothPractice: {
-    title: '計算と文字',
+    title: 'Math + Letters practice',
     body: [
-      '計算を解くたびに、文字が一瞬出ます。これを繰り返し、最後に文字を出てきた順に選びます。',
+      '式を解くたびに、文字が一瞬出ます。これを繰り返し、最後に文字を出てきた順に選びます。',
       'ここから計算に制限時間があります。過ぎると次へ進み、計算ミスになります。',
     ],
   },
   main: {
-    title: '本番',
-    body: ['練習と同じ形で15回行います。計算の正確さも、文字の記憶も、どちらも崩さないようにしてください。'],
+    title: 'Test',
+    body: ['練習と同じ形で15セット行います。計算の正確さも、文字の記憶も、どちらも崩さないようにしてください。'],
   },
   quick: { title: '', body: [] },
 };
+
+export const RECALL_HINT = '出てきた順に選びます。分からない位置は「?」を押します。';
+
+/** 計算の正答率がこの値（%）を下回ったら警告色にする。原著の除外基準。 */
+export const MATH_ACCURACY_FLOOR = 85;
 
 export function relativeDay(iso: string, now = new Date()): string {
   const d = new Date(iso);
@@ -43,6 +49,15 @@ export function relativeDay(iso: string, now = new Date()): string {
   return `${days}日前`;
 }
 
+const two = (n: number): string => String(n).padStart(2, '0');
+
+/** 例: 10/4 18:30 */
+export function dateTime(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${two(d.getMinutes())}`;
+}
+
+/** 例: 10/4 */
 export function shortDate(iso: string): string {
   const d = new Date(iso);
   return `${d.getMonth() + 1}/${d.getDate()}`;
@@ -50,8 +65,17 @@ export function shortDate(iso: string): string {
 
 export const pct = (ratio: number): number => Math.round(ratio * 100);
 
-/** 計算ミスの文言。時間切れがあれば内訳を添える。 */
+/** 計算正答率（%）。問題が 0 件なら null。 */
+export function mathAccuracyPct(correct: number, total: number): number | null {
+  return total === 0 ? null : Math.round((correct / total) * 100);
+}
+
+export const isLowAccuracy = (p: number | null): boolean => p !== null && p < MATH_ACCURACY_FLOOR;
+
+/** 計算ミスの表示。時間切れがあれば内訳を添える。例: `1（speed 1）` */
 export function mathErrorsText(speed: number, accuracy: number): string {
   const total = speed + accuracy;
-  return speed > 0 ? `計算ミス ${total}（時間切れ ${speed}）` : `計算ミス ${total}`;
+  return speed > 0 ? `${total}（speed ${speed}）` : String(total);
 }
+
+export const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;

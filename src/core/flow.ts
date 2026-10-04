@@ -34,10 +34,21 @@ export interface FlowResult {
   at: string;
 }
 
+/** ブロック内の計算の累積成績。 */
+export interface MathTally {
+  correct: number;
+  total: number;
+}
+
+/** 想起の操作説明を出す最初の試行数（原著どおり 3）。 */
+export const RECALL_HINT_TRIALS = 3;
+
 export type FlowView =
   | { kind: 'intro'; stage: StageId }
-  | { kind: 'trial'; stage: StageId; trial: TrialView }
-  | { kind: 'feedback'; stage: StageId; record: TrialRecord }
+  /** recallHint: 想起画面に操作説明を出すか（セッションの最初の 3 回だけ）。 */
+  | { kind: 'trial'; stage: StageId; trial: TrialView; recallHint: boolean }
+  /** math: このブロックの計算の累積成績（この試行を含む）。 */
+  | { kind: 'feedback'; stage: StageId; record: TrialRecord; math: MathTally }
   | { kind: 'done'; result: FlowResult };
 
 export interface FlowOptions {
@@ -61,7 +72,7 @@ const both = (sizes: number[], limit: number): TrialSpec[] =>
 
 function stagePlans(opts: FlowOptions): StagePlan[] {
   if (opts.calibrationOnly) {
-    return [{ id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(15) }];
+    return [{ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) }];
   }
   if (opts.mode === 'formal') {
     const plan = formalPlan(opts.rng);
@@ -74,14 +85,14 @@ function stagePlans(opts: FlowOptions): StagePlan[] {
         specs: () =>
           plan.lettersPractice.map((setSize) => ({ setSize, math: false, letters: true, timeLimit: null })),
       },
-      { id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
+      { id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
       { id: 'bothPractice', intro: true, feedback: true, scored: false, specs: (limit) => both(plan.bothPractice, limit) },
       { id: 'main', intro: true, feedback: true, scored: true, specs: (limit) => both(plan.main, limit) },
     ];
   }
   const stages: StagePlan[] = [];
   if (opts.timeLimit === null) {
-    stages.push({ id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(15) });
+    stages.push({ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) });
   }
   const sizes = quickSetSizes(opts.reps, opts.rng);
   stages.push({ id: 'quick', intro: false, feedback: true, scored: true, specs: (limit) => both(sizes, limit) });
@@ -101,6 +112,8 @@ export class Flow {
   private newCalibration: Calibration | null = null;
   private readonly scored: TrialRecord[] = [];
   private mathPracticeRecords: TrialRecord[] = [];
+  private stageMath: MathTally = { correct: 0, total: 0 };
+  private recallTrials = 0;
   private cancelled = false;
 
   constructor(private readonly opts: FlowOptions) {
@@ -144,6 +157,7 @@ export class Flow {
   private enterStage(): void {
     this.specs = this.stage.specs(this.timeLimit);
     this.trialIndex = 0;
+    this.stageMath = { correct: 0, total: 0 };
     if (this.stage.intro) {
       this.setView({ kind: 'intro', stage: this.stage.id });
     } else {
@@ -159,7 +173,12 @@ export class Flow {
       rng: this.opts.rng,
       onView: () => {
         if (this.runner === runner && !this.cancelled) {
-          this.setView({ kind: 'trial', stage: stage.id, trial: runner.view });
+          this.setView({
+            kind: 'trial',
+            stage: stage.id,
+            trial: runner.view,
+            recallHint: this.recallTrials < RECALL_HINT_TRIALS,
+          });
         }
       },
       onDone: (record) => this.onTrialDone(stage, record),
@@ -172,8 +191,12 @@ export class Flow {
     if (this.cancelled) return;
     if (stage.scored) this.scored.push(record);
     if (stage.id === 'mathPractice') this.mathPracticeRecords.push(record);
-    if (stage.feedback) this.setView({ kind: 'feedback', stage: stage.id, record });
-    else this.advance();
+    if (record.spec.letters) this.recallTrials++;
+    this.stageMath.total += record.math.length;
+    this.stageMath.correct += record.math.filter((m) => m.result === 'correct').length;
+    if (stage.feedback) {
+      this.setView({ kind: 'feedback', stage: stage.id, record, math: { ...this.stageMath } });
+    } else this.advance();
   }
 
   private advance(): void {

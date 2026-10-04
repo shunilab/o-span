@@ -77,7 +77,7 @@ const both = (sizes: number[], limit: number): TrialSpec[] =>
 
 function stagePlans(opts: FlowOptions): StagePlan[] {
   if (opts.calibrationOnly) {
-    return [{ id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(15) }];
+    return [{ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) }];
   }
   if (opts.mode === 'formal') {
     const plan = formalPlan(opts.rng);
@@ -90,14 +90,14 @@ function stagePlans(opts: FlowOptions): StagePlan[] {
         specs: () =>
           plan.lettersPractice.map((setSize) => ({ setSize, math: false, letters: true, timeLimit: null })),
       },
-      { id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
+      { id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
       { id: 'bothPractice', intro: true, feedback: true, scored: false, specs: (limit) => both(plan.bothPractice, limit) },
       { id: 'main', intro: true, feedback: true, scored: true, specs: (limit) => both(plan.main, limit) },
     ];
   }
   const stages: StagePlan[] = [];
   if (opts.timeLimit === null) {
-    stages.push({ id: 'mathPractice', intro: true, feedback: false, scored: false, specs: () => MATH_PRACTICE(15) });
+    stages.push({ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) });
   }
   const sizes = quickSetSizes(opts.reps, opts.rng);
   // 計算練習から入った場合は、複合課題に切り替わる前に説明を出す
@@ -200,7 +200,7 @@ export class Flow {
     if (record.spec.letters) this.recallTrials++;
     this.stageMath.total += record.math.length;
     this.stageMath.correct += record.math.filter((m) => m.result === 'correct').length;
-    // 計算練習は 1 問ごとには出さず、最後の 1 回だけまとめを出す
+    // 計算練習の最後の 1 問には、制限時間も添えたまとめを出す
     const summary =
       stage.id === 'mathPractice' && this.trialIndex === this.specs.length - 1
         ? { timeLimit: computeTimeLimit(this.practiceRts()) }

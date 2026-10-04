@@ -84,16 +84,20 @@ describe('Flow クイックモード（キャリブレーションなし）', ()
     expect(kindOf(flow.view)).toBe('intro');
     if (flow.view.kind === 'intro') expect(flow.view.stage).toBe('mathPractice');
     flow.next();
-    // 計算練習は Solved → True/False の 2 操作だけで次の問題へ進む（1 問ごとのフィードバックなし）
+    // 計算練習は元実装どおり、1 問ごとにフィードバックを出し、Next で次へ進む
     for (let i = 0; i < 15; i++) {
       expect(kindOf(flow.view)).toBe('trial:math');
       if (flow.view.kind === 'trial') expect(flow.view.stage).toBe('mathPractice');
       clock.advance(1500);
       flow.solved();
       flow.judge(true);
-      if (i < 14) expect(kindOf(flow.view)).toBe('trial:math');
+      expect(flow.view.kind).toBe('feedback');
+      if (i < 14) {
+        if (flow.view.kind === 'feedback') expect(flow.view.summary).toBeNull();
+        flow.next();
+      }
     }
-    // 15 問が終わったところで、まとめを 1 回だけ出す
+    // 最後の 1 問のフィードバックには、制限時間を添えたまとめが付く
     expect(flow.view.kind).toBe('feedback');
     if (flow.view.kind === 'feedback') {
       expect(flow.view.summary).not.toBeNull();
@@ -156,16 +160,22 @@ describe('Flow 正式モード', () => {
 });
 
 describe('Flow フィードバック', () => {
-  it('計算練習は 1 問ごとにはフィードバックを出さず、最後の 1 回だけまとめを出す', () => {
+  it('計算練習は 1 問ごとにフィードバックを出し、累積の問題数が増えていく', () => {
     const { flow, clock } = make({ timeLimit: null });
     flow.start();
     flow.next();
-    for (let i = 0; i < 15; i++) {
+    const totals: number[] = [];
+    for (let i = 0; i < 3; i++) {
       clock.advance(1000);
       flow.solved();
       flow.judge(true);
-      expect(flow.view.kind).toBe(i < 14 ? 'trial' : 'feedback');
+      if (flow.view.kind === 'feedback') {
+        totals.push(flow.view.math.total);
+        expect(flow.view.math.correct).toBeLessThanOrEqual(flow.view.math.total);
+      }
+      flow.next();
     }
+    expect(totals).toEqual([1, 2, 3]);
   });
 
   it('累積はブロックごとに数え直す（正式モードの複合練習と本番）', () => {

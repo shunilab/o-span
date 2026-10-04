@@ -18,6 +18,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return el;
 }
 
-export function button(label: string, cls: string, onClick: () => void): HTMLButtonElement {
-  return h('button', { class: cls, type: 'button', onclick: onClick }, label);
+/** key はキーボードのショートカット名。マウスのある環境だけ、ボタンの中に小さく表示する。 */
+export function button(label: string, cls: string, onClick: () => void, key?: string): HTMLButtonElement {
+  const b = h('button', { class: cls, type: 'button', onclick: onClick }, label);
+  if (key) b.dataset.key = key;
+  return b;
 }

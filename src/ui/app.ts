@@ -24,6 +24,7 @@ import {
 } from './copy';
 import { demoFor } from './demo';
 import { button, h } from './dom';
+import { mapKey, type KeyAction, type KeyContext } from './keys';
 
 type Screen = 'home' | 'flow' | 'settings';
 
@@ -48,6 +49,8 @@ export class App {
   private confirm: 'history' | 'calibration' | null = null;
   private persisted: boolean | null = null;
   private updateReady = false;
+  /** 想起画面の入力表示を描き直す関数（画面ごとに差し替わる）。 */
+  private recallDraw: (() => void) | null = null;
 
   constructor(
     private readonly root: HTMLElement,
@@ -58,6 +61,7 @@ export class App {
     void requestPersistence().then((ok) => {
       this.persisted = ok;
     });
+    document.addEventListener('keydown', (e) => this.onKey(e));
     await this.showHome();
   }
 
@@ -93,16 +97,8 @@ export class App {
   private renderHome(): HTMLElement {
     const last = this.lastQuick;
     const circle = h('button', { class: 'aperture aperture-start', type: 'button' }, 'Start');
-    circle.onclick = () => {
-      if (circle.classList.contains('expanding')) return;
-      const go = () => this.startFlow('quick');
-      if (reducedMotion()) {
-        go();
-        return;
-      }
-      circle.classList.add('expanding');
-      setTimeout(go, 300);
-    };
+    circle.dataset.key = 'Space';
+    circle.onclick = () => this.startQuick();
     return h(
       'main',
       { class: 'screen' },
@@ -134,6 +130,101 @@ export class App {
         }),
       ),
     );
+  }
+
+  /** ホームの Start（クリックでもキーでも）。円が広がってから始める。 */
+  private startQuick(): void {
+    const circle = this.root.querySelector<HTMLElement>('.aperture-start');
+    if (circle?.classList.contains('expanding')) return;
+    const go = () => this.startFlow('quick');
+    if (!circle || reducedMotion()) {
+      go();
+      return;
+    }
+    circle.classList.add('expanding');
+    setTimeout(go, 300);
+  }
+
+  // ---------- キーボード ----------
+
+  private keyContext(): KeyContext | null {
+    if (this.screen === 'home') return 'home';
+    if (this.screen === 'settings') return 'settings';
+    const v = this.flow?.view;
+    if (!v) return null;
+    switch (v.kind) {
+      case 'intro':
+        return 'intro';
+      case 'feedback':
+        return 'feedback';
+      case 'done':
+        return 'done';
+      case 'trial':
+        return v.trial.kind;
+    }
+  }
+
+  private onKey(e: KeyboardEvent): void {
+    // 押しっぱなしで画面が飛ばないよう repeat は無視。ブラウザのショートカットも邪魔しない
+    if (e.repeat || e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return;
+    const ctx = this.keyContext();
+    if (!ctx) return;
+    const action = mapKey(ctx, e.key);
+    if (!action) return;
+    e.preventDefault();
+    // クリックしたボタンにフォーカスが残っていると、Enter でそのボタンが再び押されてしまう
+    (document.activeElement as HTMLElement | null)?.blur?.();
+    this.apply(action);
+  }
+
+  private apply(action: KeyAction): void {
+    const flow = this.flow;
+    switch (action.type) {
+      case 'primary': {
+        if (this.screen === 'home') {
+          this.startQuick();
+          break;
+        }
+        const v = flow?.view;
+        if (!flow || !v) break;
+        if (v.kind === 'trial' && v.trial.kind === 'math') flow.solved();
+        else if (v.kind === 'intro' || v.kind === 'feedback') flow.next();
+        else if (v.kind === 'done') void this.showHome();
+        break;
+      }
+      case 'quit':
+        void this.showHome();
+        break;
+      case 'true':
+        flow?.judge(true);
+        break;
+      case 'false':
+        flow?.judge(false);
+        break;
+      case 'letter':
+        this.addLetter(action.letter);
+        break;
+      case 'blank':
+        this.addLetter('?');
+        break;
+      case 'clear':
+        this.clearLetter();
+        break;
+      case 'submit':
+        flow?.submit(this.entered);
+        break;
+    }
+  }
+
+  private addLetter(c: string): void {
+    if (this.entered.length >= MAX_RECALL) return;
+    this.entered.push(c);
+    this.recallDraw?.();
+  }
+
+  private clearLetter(): void {
+    this.entered.pop();
+    this.recallDraw?.();
   }
 
   // ---------- セッション ----------
@@ -212,7 +303,7 @@ export class App {
       { class: 'screen' },
       this.quitBar(),
       h('div', { class: 'text' }, h('h1', {}, copy.title), demo, ...copy.body.map((t) => h('p', {}, t))),
-      h('div', { class: 'actions' }, button('Start', 'btn btn-main', () => flow.next())),
+      h('div', { class: 'actions' }, button('Start', 'btn btn-main', () => flow.next(), 'Space')),
     );
   }
 
@@ -224,7 +315,7 @@ export class App {
           'main',
           { class: 'screen' },
           h('div', { class: 'stage' }, h('div', { class: 'formula' }, trial.text)),
-          h('div', { class: 'actions' }, button('Solved', 'btn btn-main', () => flow.solved())),
+          h('div', { class: 'actions' }, button('Solved', 'btn btn-main', () => flow.solved(), 'Space')),
         );
       case 'judge':
         return h(
@@ -234,8 +325,8 @@ export class App {
           h(
             'div',
             { class: 'actions' },
-            button('True', 'btn', () => flow.judge(true)),
-            button('False', 'btn', () => flow.judge(false)),
+            button('True', 'btn', () => flow.judge(true), 'T'),
+            button('False', 'btn', () => flow.judge(false), 'F'),
           ),
         );
       case 'letter':
@@ -253,33 +344,26 @@ export class App {
     const entered = h('div', { class: 'entered', ariaLabel: '入力した文字' });
     const draw = () => entered.replaceChildren(...this.entered.map((c) => h('span', {}, c)));
     draw();
-    const add = (c: string) => {
-      if (this.entered.length >= MAX_RECALL) return;
-      this.entered.push(c);
-      draw();
-    };
+    this.recallDraw = draw;
     return h(
       'main',
       { class: 'screen' },
       h('p', { class: 'aux recall-hint' }, hint ? RECALL_HINT : ''),
       h('div', { class: 'stage' }, entered),
-      h('div', { class: 'grid' }, ...LETTERS.map((c) => button(c, 'key', () => add(c)))),
+      h('div', { class: 'grid' }, ...LETTERS.map((c) => button(c, 'key', () => this.addLetter(c)))),
       h(
         'div',
         { class: 'actions' },
-        button('?', 'btn', () => add('?')),
-        button('Clear', 'btn', () => {
-          this.entered.pop();
-          draw();
-        }),
-        button('Enter', 'btn btn-main', () => flow.submit(this.entered)),
+        button('?', 'btn', () => this.addLetter('?')),
+        button('Clear', 'btn', () => this.clearLetter(), '⌫'),
+        button('Enter', 'btn btn-main', () => flow.submit(this.entered), 'Enter'),
       ),
     );
   }
 
   /** 画面の上にだけ置く中断リンク。下の操作ボタンの位置を画面ごとに変えないため。 */
   private quitBar(): HTMLElement {
-    return h('div', { class: 'quit-bar' }, button('Quit', 'link', () => void this.showHome()));
+    return h('div', { class: 'quit-bar' }, button('Quit', 'link', () => void this.showHome(), 'Esc'));
   }
 
   private renderFeedback(flow: Flow, record: TrialRecord, math: MathTally, summary: PracticeSummary | null): HTMLElement {
@@ -296,7 +380,7 @@ export class App {
         { class: 'screen' },
         this.quitBar(),
         h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
-        h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next())),
+        h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next(), 'Space')),
       );
     }
     if (record.spec.letters) rows.push(kv('Letters', `${s.lettersCorrect} / ${s.setSize}`));
@@ -310,7 +394,7 @@ export class App {
       { class: 'screen' },
       this.quitBar(),
       h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
-      h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next())),
+      h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next(), 'Space')),
     );
   }
 
@@ -346,7 +430,7 @@ export class App {
       'main',
       { class: 'screen' },
       h('div', { class: 'text' }, ...body),
-      h('div', { class: 'actions' }, button('Home', 'btn btn-main', () => void this.showHome())),
+      h('div', { class: 'actions' }, button('Home', 'btn btn-main', () => void this.showHome(), 'Space')),
     );
   }
 
@@ -457,6 +541,16 @@ export class App {
         ),
         h(
           'section',
+          {},
+          h('h2', {}, 'Keyboard'),
+          h(
+            'p',
+            { class: 'muted' },
+            'Space / Enter で Solved と Next。T（←）が True、F（→）が False。想起は文字キーで入力し、? で空欄、Backspace で Clear、Enter で決定。Esc で Quit。',
+          ),
+        ),
+        h(
+          'section',
           { class: 'danger-zone' },
           h('h2', {}, 'Reset'),
           h(
@@ -481,7 +575,7 @@ export class App {
           ),
         ),
       ),
-      h('div', { class: 'actions' }, button('Back', 'btn', () => void this.showHome())),
+      h('div', { class: 'actions' }, button('Back', 'btn', () => void this.showHome(), 'Esc')),
     );
   }
 

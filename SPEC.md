@@ -148,6 +148,27 @@ N 回繰り返す:
 - 実装時に `frontend-design` スキルを使う。**コードを書く前に、デザイン計画（色・書体・レイアウト・原則）を作ってユーザーの承認を得る**
 - ブリーフ: 自分専用の O-Span。iPhone のホーム画面から使う。1 タップで始められ、課題中は計算と文字以外が目に入らないこと
 
+### 4.7 キーボード操作
+
+PC のブラウザで、マウスを動かさずに進められるようにする。スマホの操作は変わらない。
+
+| 画面 | キー | 動作 |
+|---|---|---|
+| ホーム | Space / Enter | Start（クイック） |
+| 説明・フィードバック | Space / Enter、Esc | Start / Next、Quit |
+| 計算 | Space / Enter | Solved |
+| 判定 | T または ←、F または → | True、False（Space / Enter は無視） |
+| 文字（800 ms） | なし | 誤入力を避けるため何も受け付けない |
+| 想起 | F H J K L N P Q R S T Y（大小どちらも） | その文字を入力 |
+| | `?` または `/`、Backspace / Delete、Enter | 空欄、Clear、決定 |
+| 結果 | Space / Enter | Home |
+| 設定 | Esc | Back |
+
+- Ctrl / Meta / Alt を伴うキーと、押しっぱなし（repeat）は無視する
+- 処理したキーは `preventDefault` し、フォーカス中のボタンを `blur` する（想起でクリックしたキーが Enter で再び押されるのを防ぐ）
+- マウスのある環境（`hover: hover` かつ `pointer: fine`）だけ、ボタンの中にキー名を小さく表示する。スマホには出さない
+- 実装: `src/ui/keys.ts` の純粋関数 `mapKey(画面, キー)`
+
 ## 5. ライセンスとクレジット
 
 - PsyToolkit の著作権表記: 非商用の研究・教育目的なら自由に利用できるが、Prof. Gijsbert Stoet の明記が条件。商用利用は要許可

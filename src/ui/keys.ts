@@ -1,12 +1,14 @@
 import { LETTERS } from '../core/letters';
 
 /** いまどの画面か（キーの意味は画面ごとに違う）。 */
-export type KeyContext = 'home' | 'intro' | 'math' | 'judge' | 'letter' | 'recall' | 'feedback' | 'done' | 'settings';
+export type KeyContext = 'home' | 'setup' | 'intro' | 'math' | 'judge' | 'letter' | 'recall' | 'feedback' | 'done' | 'settings';
 
 export type KeyAction =
   /** 画面の主ボタン（Start / Solved / Next / Home）。 */
   | { type: 'primary' }
   | { type: 'quit' }
+  /** Setup の練習を番号で始める（1 Math、2 Letters、3 Math + Letters）。 */
+  | { type: 'step'; n: 1 | 2 | 3 }
   | { type: 'true' }
   | { type: 'false' }
   | { type: 'letter'; letter: string }
@@ -41,6 +43,9 @@ export function mapKey(ctx: KeyContext, key: string): KeyAction | null {
       const upper = key.length === 1 ? key.toUpperCase() : '';
       return (LETTERS as readonly string[]).includes(upper) ? { type: 'letter', letter: upper } : null;
     }
+    case 'setup':
+      if (key === 'Escape') return { type: 'quit' };
+      return key === '1' || key === '2' || key === '3' ? { type: 'step', n: Number(key) as 1 | 2 | 3 } : null;
     case 'settings':
       return key === 'Escape' ? { type: 'quit' } : null;
     case 'letter':

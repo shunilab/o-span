@@ -1,19 +1,24 @@
 import { realClock } from '../core/clock';
 import {
   Flow,
+  type FlowMode,
   type FlowResult,
   type FlowView,
   type MathTally,
   type Mode,
+  type PracticeStep,
   type PracticeSummary,
+  type StageDone,
   type StageId,
 } from '../core/flow';
 import { LETTERS } from '../core/letters';
 import { MAX_RECALL, type TrialRecord } from '../core/trial';
-import { Store, requestPersistence, type SessionRecord } from '../storage/store';
+import { EMPTY_PRACTICE, Store, requestPersistence, type PracticeProgress, type SessionRecord } from '../storage/store';
 import {
   INTRO,
   RECALL_HINT,
+  SETUP_INTRO,
+  SETUP_STEPS,
   dateTime,
   isLowAccuracy,
   mathAccuracyPct,
@@ -21,12 +26,13 @@ import {
   pct,
   relativeDay,
   seconds,
+  shortDate,
 } from './copy';
 import { demoFor } from './demo';
 import { button, h } from './dom';
 import { mapKey, type KeyAction, type KeyContext } from './keys';
 
-type Screen = 'home' | 'flow' | 'settings';
+type Screen = 'home' | 'setup' | 'flow' | 'settings';
 
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -38,7 +44,7 @@ function kv(label: string, value: string, warn = false): HTMLElement {
 export class App {
   private screen: Screen = 'home';
   private flow: Flow | null = null;
-  private calibrationOnly = false;
+  private flowMode: FlowMode = 'quick';
   private saved = false;
   private saveError = false;
   private entered: string[] = [];
@@ -46,7 +52,8 @@ export class App {
   private lastQuick: SessionRecord | null = null;
   private calibration: Awaited<ReturnType<Store['getCalibration']>> = null;
   private notice = '';
-  private confirm: 'history' | 'calibration' | null = null;
+  private confirm: 'history' | 'setup' | null = null;
+  private practice: PracticeProgress = { ...EMPTY_PRACTICE };
   private persisted: boolean | null = null;
   private updateReady = false;
   /** 想起画面の入力表示を描き直す関数（画面ごとに差し替わる）。 */
@@ -79,16 +86,36 @@ export class App {
     this.flow?.cancel();
     this.flow = null;
     this.screen = 'home';
-    [this.lastQuick, this.calibration] = await Promise.all([
+    await this.loadProgress();
+    this.render();
+  }
+
+  private async loadProgress(): Promise<void> {
+    [this.lastQuick, this.calibration, this.practice] = await Promise.all([
       this.store.listSessions('quick').then((l) => l[0] ?? null),
       this.store.getCalibration(),
+      this.store.getPractice(),
     ]);
-    this.render();
+  }
+
+  /** Setup（計算・文字・複合の練習）がすべて済んでいるか。済んでいないと Start は使えない。 */
+  private isReady(): boolean {
+    return this.calibration !== null && this.practice.letters !== null && this.practice.both !== null;
+  }
+
+  private setupDoneCount(): number {
+    return [this.calibration, this.practice.letters, this.practice.both].filter((v) => v !== null).length;
   }
 
   private render(): void {
     const view =
-      this.screen === 'home' ? this.renderHome() : this.screen === 'settings' ? this.renderSettings() : this.renderFlow();
+      this.screen === 'home'
+        ? this.renderHome()
+        : this.screen === 'setup'
+          ? this.renderSetup()
+          : this.screen === 'settings'
+            ? this.renderSettings()
+            : this.renderFlow();
     this.root.replaceChildren(view);
   }
 
@@ -96,40 +123,64 @@ export class App {
 
   private renderHome(): HTMLElement {
     const last = this.lastQuick;
-    const circle = h('button', { class: 'aperture aperture-start', type: 'button' }, 'Start');
+    const ready = this.isReady();
+    // 未完のときは、塗りのない輪郭だけの円（閉じた絞り）にして、琥珀は Setup の小さな円に移す
+    const circle = h(
+      'button',
+      { class: ready ? 'aperture aperture-start' : 'aperture aperture-start locked', type: 'button' },
+      'Start',
+    );
+    circle.setAttribute('aria-disabled', String(!ready));
     circle.dataset.key = 'Space';
-    circle.onclick = () => this.startQuick();
+    circle.onclick = () => this.pressStart();
+    const satellite = h(
+      'button',
+      { class: ready ? 'satellite' : 'satellite lit', type: 'button', onclick: () => void this.showSetup() },
+      h('span', { class: 'satellite-label' }, 'Setup'),
+      ready ? null : h('span', { class: 'satellite-count' }, `${this.setupDoneCount()} / 3`),
+    );
     return h(
       'main',
       { class: 'screen' },
       h(
         'div',
         { class: 'home-top' },
-        last
-          ? kv(`前回 ${relativeDay(last.at)}`, `${last.score.score} / ${last.score.maxScore}`)
-          : h('p', { class: 'aux' }, 'まだ記録がありません'),
-      ),
-      h(
-        'div',
-        { class: 'home-middle' },
-        circle,
-        h(
-          'p',
-          { class: 'aux' },
-          this.calibration ? `Time limit ${seconds(this.calibration.timeLimit)}` : '初回は計算練習から始まります（約2分）',
-        ),
-      ),
-      h(
-        'div',
-        { class: 'actions' },
-        button('Formal test', 'btn', () => this.startFlow('formal')),
-        button('Settings', 'btn', () => {
+        h('p', { class: 'aux' }, last ? `前回 ${relativeDay(last.at)}　${last.score.score} / ${last.score.maxScore}` : 'まだ記録がありません'),
+        button('Settings', 'link', () => {
           this.notice = '';
           this.confirm = null;
           void this.showSettings();
         }),
       ),
+      h(
+        'div',
+        { class: 'home-middle' },
+        h('div', { class: 'home-stage' }, circle, satellite),
+        h(
+          'p',
+          { class: 'aux home-caption' },
+          ready && this.calibration ? `Time limit ${seconds(this.calibration.timeLimit)}` : 'Start は Setup が済むと使えます',
+        ),
+      ),
+      h('div', { class: 'actions' }, button('Formal test', 'btn', () => this.startFlow('formal'))),
     );
+  }
+
+  /** ホームの Start（クリックでもキーでも）。Setup が未完なら、始めずに Setup の円で案内する。 */
+  private pressStart(): void {
+    if (this.isReady()) this.startQuick();
+    else this.nudgeSetup();
+  }
+
+  /** 押した操作への答えとして、Setup の円と案内文を 1 回だけ強調する。ポップアップは出さない。 */
+  private nudgeSetup(): void {
+    const targets = this.root.querySelectorAll<HTMLElement>('.satellite, .home-caption');
+    targets.forEach((el) => {
+      el.classList.remove('nudge');
+      void el.offsetWidth; // アニメーションを先頭から再生し直す
+      el.classList.add('nudge');
+    });
+    setTimeout(() => targets.forEach((el) => el.classList.remove('nudge')), 1200);
   }
 
   /** ホームの Start（クリックでもキーでも）。円が広がってから始める。 */
@@ -145,10 +196,75 @@ export class App {
     setTimeout(go, 300);
   }
 
+  // ---------- Setup ----------
+
+  private async showSetup(): Promise<void> {
+    if (this.updateReady) {
+      location.reload();
+      return;
+    }
+    this.flow?.cancel();
+    this.flow = null;
+    this.screen = 'setup';
+    await this.loadProgress();
+    this.render();
+  }
+
+  /** Setup の各ステップ。計算練習で決まる制限時間を使うので、複合練習は計算練習のあとから。 */
+  private setupSteps(): { step: PracticeStep; at: string | null; locked: boolean }[] {
+    const hasLimit = this.calibration !== null;
+    return [
+      { step: 'mathPractice', at: this.calibration?.at ?? null, locked: false },
+      { step: 'lettersPractice', at: this.practice.letters, locked: false },
+      { step: 'bothPractice', at: this.practice.both, locked: !hasLimit },
+    ];
+  }
+
+  private renderSetup(): HTMLElement {
+    const steps = this.setupSteps();
+    const next = steps.find((s) => s.at === null && !s.locked)?.step ?? null;
+    const rows = steps.map((s, i) => {
+      const copy = SETUP_STEPS[s.step];
+      const status = s.at ? `Done ${shortDate(s.at)}` : s.locked ? 'Needs 1' : 'Not yet';
+      const row = h(
+        'button',
+        { class: `step${s.at ? ' done' : ''}${next === s.step ? ' next' : ''}${s.locked ? ' locked' : ''}`, type: 'button' },
+        h('span', { class: 'step-n' }, s.at ? '✓' : String(i + 1)),
+        h('span', { class: 'step-body' }, h('span', { class: 'step-title' }, copy.title), h('span', { class: 'step-sub' }, copy.sub)),
+        h('span', { class: 'step-status' }, status),
+      );
+      row.setAttribute('aria-disabled', String(s.locked));
+      if (!s.locked) row.dataset.key = String(i + 1);
+      row.onclick = () => {
+        if (!s.locked) this.startFlow('setup', s.step);
+      };
+      return row;
+    });
+    return h(
+      'main',
+      { class: 'screen' },
+      h(
+        'div',
+        { class: 'text' },
+        h('h1', {}, 'Setup'),
+        h('p', {}, this.isReady() ? SETUP_INTRO.done : SETUP_INTRO.todo),
+        h('div', { class: 'steps' }, ...rows),
+      ),
+      h('div', { class: 'actions' }, button('Back', 'btn', () => void this.showHome(), 'Esc')),
+    );
+  }
+
+  /** 練習・本番の中断や終了のあと、元の画面に戻る。Setup の練習なら Setup、それ以外はホーム。 */
+  private leaveFlow(): void {
+    if (this.flowMode === 'setup') void this.showSetup();
+    else void this.showHome();
+  }
+
   // ---------- キーボード ----------
 
   private keyContext(): KeyContext | null {
     if (this.screen === 'home') return 'home';
+    if (this.screen === 'setup') return 'setup';
     if (this.screen === 'settings') return 'settings';
     const v = this.flow?.view;
     if (!v) return null;
@@ -182,19 +298,25 @@ export class App {
     switch (action.type) {
       case 'primary': {
         if (this.screen === 'home') {
-          this.startQuick();
+          this.pressStart();
           break;
         }
         const v = flow?.view;
         if (!flow || !v) break;
         if (v.kind === 'trial' && v.trial.kind === 'math') flow.solved();
         else if (v.kind === 'intro' || v.kind === 'feedback') flow.next();
-        else if (v.kind === 'done') void this.showHome();
+        else if (v.kind === 'done') this.leaveFlow();
         break;
       }
       case 'quit':
-        void this.showHome();
+        if (this.screen === 'flow') this.leaveFlow();
+        else void this.showHome();
         break;
+      case 'step': {
+        const s = this.setupSteps()[action.n - 1];
+        if (s && !s.locked) this.startFlow('setup', s.step);
+        break;
+      }
       case 'true':
         flow?.judge(true);
         break;
@@ -229,20 +351,21 @@ export class App {
 
   // ---------- セッション ----------
 
-  private startFlow(mode: Mode, calibrationOnly = false): void {
-    this.calibrationOnly = calibrationOnly;
+  private startFlow(mode: FlowMode, step?: PracticeStep): void {
+    this.flowMode = mode;
     this.saved = false;
     this.saveError = false;
     this.entered = [];
     this.screen = 'flow';
     this.flow = new Flow({
       mode,
+      step,
       reps: this.store.getSettings().reps,
       timeLimit: this.calibration?.timeLimit ?? null,
-      calibrationOnly,
       clock: realClock,
       rng: Math.random,
       onChange: () => this.onFlowChange(),
+      onStageDone: (done) => void this.persistStage(done),
     });
     this.flow.start();
   }
@@ -253,26 +376,41 @@ export class App {
     if (flow.view.kind === 'trial' && flow.view.trial.kind === 'recall') this.entered = [];
     if (flow.view.kind === 'done' && !this.saved) {
       this.saved = true;
-      void this.persist(flow.view.result);
+      void this.persistSession(flow.view.result);
     }
     this.render();
   }
 
-  private async persist(r: FlowResult): Promise<void> {
+  /** 練習が 1 つ終わった時点で保存する。1 項目 1 件の上書きなので、やり直しても重複しない。 */
+  private async persistStage(done: StageDone): Promise<void> {
     try {
-      if (!this.calibrationOnly) {
-        await this.store.addSession({
-          mode: r.mode,
-          at: r.at,
-          timeLimit: r.timeLimit,
-          score: r.session,
-          trials: r.trials,
-        });
+      if (done.stage === 'mathPractice' && done.calibration) {
+        this.calibration = done.calibration;
+        await this.store.setCalibration(done.calibration);
+      } else if (done.stage === 'lettersPractice') {
+        this.practice = { ...this.practice, letters: done.at };
+        await this.store.markPractice('letters', done.at);
+      } else if (done.stage === 'bothPractice') {
+        this.practice = { ...this.practice, both: done.at };
+        await this.store.markPractice('both', done.at);
       }
-      if (r.calibration) {
-        await this.store.setCalibration(r.calibration);
-        this.calibration = r.calibration;
-      }
+    } catch {
+      this.saveError = true;
+      this.render();
+    }
+  }
+
+  /** 本番の成績を保存する（Setup の練習は persistStage で保存済み）。 */
+  private async persistSession(r: FlowResult): Promise<void> {
+    if (r.mode === 'setup') return;
+    try {
+      await this.store.addSession({
+        mode: r.mode,
+        at: r.at,
+        timeLimit: r.timeLimit,
+        score: r.session,
+        trials: r.trials,
+      });
     } catch {
       this.saveError = true;
       this.render();
@@ -363,7 +501,7 @@ export class App {
 
   /** 画面の上にだけ置く中断リンク。下の操作ボタンの位置を画面ごとに変えないため。 */
   private quitBar(): HTMLElement {
-    return h('div', { class: 'quit-bar' }, button('Quit', 'link', () => void this.showHome(), 'Esc'));
+    return h('div', { class: 'quit-bar' }, button('Quit', 'link', () => this.leaveFlow(), 'Esc'));
   }
 
   private renderFeedback(flow: Flow, record: TrialRecord, math: MathTally, summary: PracticeSummary | null): HTMLElement {
@@ -400,13 +538,8 @@ export class App {
 
   private renderDone(r: FlowResult): HTMLElement {
     const body: (HTMLElement | null)[] = [];
-    if (this.calibrationOnly) {
-      body.push(
-        r.calibration ? h('h1', {}, 'Time limit updated') : h('h1', {}, 'Time limit not updated'),
-        r.calibration
-          ? h('div', { class: 'kv-list' }, kv('Math time limit', seconds(r.timeLimit)))
-          : h('p', {}, '計算の正答がなかったため、更新していません。もう一度やり直してください。'),
-      );
+    if (r.mode === 'setup' && r.practice) {
+      body.push(...this.setupDoneBody(r.practice));
     } else {
       const s = r.session;
       const p = pct(s.mathAccuracy);
@@ -430,8 +563,33 @@ export class App {
       'main',
       { class: 'screen' },
       h('div', { class: 'text' }, ...body),
-      h('div', { class: 'actions' }, button('Home', 'btn btn-main', () => void this.showHome(), 'Space')),
+      h(
+        'div',
+        { class: 'actions' },
+        button(r.mode === 'setup' ? 'Setup' : 'Home', 'btn btn-main', () => this.leaveFlow(), 'Space'),
+      ),
     );
+  }
+
+  /** Setup の練習が終わったときの画面。保存した内容を見せる。 */
+  private setupDoneBody(done: StageDone): HTMLElement[] {
+    const title = SETUP_STEPS[done.stage as PracticeStep]?.title ?? '';
+    const rows: HTMLElement[] = [];
+    const math = mathAccuracyPct(done.math.correct, done.math.total);
+    if (done.stage === 'mathPractice') {
+      if (!done.calibration) {
+        return [
+          h('h1', {}, 'Not saved'),
+          h('p', {}, '計算の正答がなかったため、制限時間を決められませんでした。もう一度行ってください。'),
+        ];
+      }
+      if (math !== null) rows.push(kv('Math accuracy', `${math}%`, isLowAccuracy(math)));
+      rows.push(kv('Math time limit', seconds(done.calibration.timeLimit)));
+    } else {
+      if (done.stage === 'bothPractice' && math !== null) rows.push(kv('Math accuracy', `${math}%`, isLowAccuracy(math)));
+      rows.push(kv('Letters', `${done.letters.correct} / ${done.letters.total}`));
+    }
+    return [h('h1', {}, 'Saved'), h('p', { class: 'muted' }, title), h('div', { class: 'kv-list' }, ...rows)];
   }
 
   // ---------- 設定 ----------
@@ -479,7 +637,7 @@ export class App {
       sessionsEl.replaceChildren(list('quick', 'Quick'), list('formal', 'Formal'));
     });
 
-    const dangerChip = (key: 'history' | 'calibration', label: string, run: () => Promise<void>) =>
+    const dangerChip = (key: 'history' | 'setup', label: string, run: () => Promise<void>) =>
       h(
         'button',
         {
@@ -518,8 +676,8 @@ export class App {
                 kv('SD', seconds(cal.sd)),
                 kv('Measured', dateTime(cal.at)),
               )
-            : h('p', { class: 'muted' }, '未設定。次のクイックの前に計算練習を行います。'),
-          h('div', { class: 'row' }, button('Recalibrate', 'chip', () => this.startFlow('quick', true))),
+            : h('p', { class: 'muted' }, '未設定です。Setup の Math practice で決まります。'),
+          h('p', { class: 'muted' }, '取り直すときは、Setup から Math practice をやり直します。'),
         ),
         h('section', {}, h('h2', {}, 'History'), sessionsEl),
         h(
@@ -556,7 +714,10 @@ export class App {
           h(
             'div',
             { class: 'row' },
-            cal ? dangerChip('calibration', 'Reset time limit', () => this.store.clearCalibration()) : null,
+            dangerChip('setup', 'Reset setup', async () => {
+              await this.store.clearCalibration();
+              await this.store.clearPractice();
+            }),
             dangerChip('history', 'Delete history', () => this.store.clearSessions()),
           ),
         ),

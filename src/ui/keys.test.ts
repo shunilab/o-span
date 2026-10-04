@@ -55,6 +55,15 @@ describe('mapKey', () => {
     expect(mapKey('recall', 'Enter')).toEqual({ type: 'submit' });
   });
 
+  it('Setup: 1 / 2 / 3 でその練習を始め、Esc で戻る', () => {
+    expect(mapKey('setup', '1')).toEqual({ type: 'step', n: 1 });
+    expect(mapKey('setup', '2')).toEqual({ type: 'step', n: 2 });
+    expect(mapKey('setup', '3')).toEqual({ type: 'step', n: 3 });
+    expect(mapKey('setup', 'Escape')).toEqual({ type: 'quit' });
+    expect(mapKey('setup', '4')).toBeNull();
+    expect(mapKey('setup', ' ')).toBeNull();
+  });
+
   it('設定: Esc で戻る', () => {
     expect(mapKey('settings', 'Escape')).toEqual({ type: 'quit' });
     expect(mapKey('settings', 'Enter')).toBeNull();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FakeClock } from './fakeClock';
-import { Flow, type FlowOptions, type FlowView } from './flow';
+import { Flow, type FlowOptions, type FlowView, type StageDone } from './flow';
 import { seededRng } from './random';
 import { LETTER_MS } from './trial';
 
@@ -77,48 +77,6 @@ describe('Flow クイックモード（キャリブレーション済み）', ()
   });
 });
 
-describe('Flow クイックモード（キャリブレーションなし）', () => {
-  it('計算練習 15 問 → まとめ → 本番の説明 → 本番', () => {
-    const { flow, clock } = make({ timeLimit: null });
-    flow.start();
-    expect(kindOf(flow.view)).toBe('intro');
-    if (flow.view.kind === 'intro') expect(flow.view.stage).toBe('mathPractice');
-    flow.next();
-    // 計算練習は元実装どおり、1 問ごとにフィードバックを出し、Next で次へ進む
-    for (let i = 0; i < 15; i++) {
-      expect(kindOf(flow.view)).toBe('trial:math');
-      if (flow.view.kind === 'trial') expect(flow.view.stage).toBe('mathPractice');
-      clock.advance(1500);
-      flow.solved();
-      flow.judge(true);
-      expect(flow.view.kind).toBe('feedback');
-      if (i < 14) {
-        if (flow.view.kind === 'feedback') expect(flow.view.summary).toBeNull();
-        flow.next();
-      }
-    }
-    // 最後の 1 問のフィードバックには、制限時間を添えたまとめが付く
-    expect(flow.view.kind).toBe('feedback');
-    if (flow.view.kind === 'feedback') {
-      expect(flow.view.summary).not.toBeNull();
-      expect(flow.view.math.total).toBe(15);
-      // 反応時間はすべて 1500ms（SD 0）なので、制限時間も 1500ms
-      expect(flow.view.summary?.timeLimit).toBe(1500);
-    }
-    flow.next();
-    // 複合課題に切り替わる前に説明を出す（突然始めない）
-    expect(kindOf(flow.view)).toBe('intro');
-    if (flow.view.kind === 'intro') expect(flow.view.stage).toBe('quick');
-    flow.next();
-    expect(kindOf(flow.view)).toBe('trial:math');
-    if (flow.view.kind === 'trial') expect(flow.view.stage).toBe('quick');
-    clock.advance(1499);
-    expect(kindOf(flow.view)).toBe('trial:math');
-    clock.advance(1);
-    expect(kindOf(flow.view)).toBe('trial:letter');
-  });
-});
-
 describe('Flow 正式モード', () => {
   it('文字練習 → 計算練習 → 複合練習 → 本番 の順で、各ブロックの前に説明が出る', () => {
     const { flow, clock } = make({ mode: 'formal', timeLimit: null });
@@ -161,7 +119,7 @@ describe('Flow 正式モード', () => {
 
 describe('Flow フィードバック', () => {
   it('計算練習は 1 問ごとにフィードバックを出し、累積の問題数が増えていく', () => {
-    const { flow, clock } = make({ timeLimit: null });
+    const { flow, clock } = make({ mode: 'setup', step: 'mathPractice', timeLimit: null });
     flow.start();
     flow.next();
     const totals: number[] = [];
@@ -217,24 +175,145 @@ describe('Flow フィードバック', () => {
   });
 });
 
-describe('Flow キャリブレーションのみ', () => {
-  it('計算練習 15 問だけ行い、制限時間を取って終わる（得点なし）', () => {
-    const { flow, clock } = make({ calibrationOnly: true, timeLimit: 9999 });
+describe('Flow Setup（練習を 1 つだけ単独で行う）', () => {
+  /** 試行を最後まで進める（フィードバックは Next で送る）。 */
+  function runToEnd(flow: Flow, clock: FakeClock, rt = 1500): void {
+    let guard = 0;
+    while (flow.view.kind !== 'done' && guard++ < 500) {
+      const v = flow.view;
+      if (v.kind === 'intro' || v.kind === 'feedback') flow.next();
+      else if (v.kind === 'trial' && v.trial.kind === 'math') {
+        clock.advance(rt);
+        flow.solved();
+      } else if (v.kind === 'trial' && v.trial.kind === 'judge') flow.judge(true);
+      else if (v.kind === 'trial' && v.trial.kind === 'letter') clock.advance(LETTER_MS);
+      else if (v.kind === 'trial') flow.submit([]);
+    }
+  }
+
+  function setup(step: 'mathPractice' | 'lettersPractice' | 'bothPractice', timeLimit: number | null) {
+    const done: StageDone[] = [];
+    const { flow, clock } = make({ mode: 'setup', step, timeLimit, onStageDone: (d) => done.push(d) });
+    return { flow, clock, done };
+  }
+
+  it('Math practice: 15 問 → 制限時間を保存 → 終了（成績は残さない）', () => {
+    const { flow, clock, done } = setup('mathPractice', null);
     flow.start();
     expect(kindOf(flow.view)).toBe('intro');
+    runToEnd(flow, clock, 1500);
+    expect(done).toHaveLength(1);
+    expect(done[0]?.stage).toBe('mathPractice');
+    expect(done[0]?.calibration?.timeLimit).toBe(1500);
+    expect(done[0]?.math.total).toBe(15);
+    expect(flow.view.kind).toBe('done');
+    if (flow.view.kind === 'done') {
+      expect(flow.view.result.mode).toBe('setup');
+      expect(flow.view.result.trials).toEqual([]);
+      expect(flow.view.result.practice?.stage).toBe('mathPractice');
+    }
+  });
+
+  it('Letters practice: 4 セット（計 10 文字）だけ行う。計算は出ない', () => {
+    const { flow, clock, done } = setup('lettersPractice', null);
+    flow.start();
+    const kinds = new Set<string>();
+    let guard = 0;
+    while (flow.view.kind !== 'done' && guard++ < 500) {
+      if (flow.view.kind === 'trial') kinds.add(flow.view.trial.kind);
+      const v = flow.view;
+      if (v.kind === 'intro' || v.kind === 'feedback') flow.next();
+      else if (v.kind === 'trial' && v.trial.kind === 'letter') clock.advance(LETTER_MS);
+      else if (v.kind === 'trial') flow.submit([]);
+    }
+    expect([...kinds].sort()).toEqual(['letter', 'recall']);
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ stage: 'lettersPractice', calibration: null, letters: { correct: 0, total: 10 } });
+  });
+
+  it('Math + Letters practice: 保存済みの制限時間で 3 セット（計算 6 問）を行う', () => {
+    const { flow, clock, done } = setup('bothPractice', 2000);
+    flow.start();
     flow.next();
-    for (let i = 0; i < 15; i++) {
-      clock.advance(1500);
+    clock.advance(1999);
+    expect(kindOf(flow.view)).toBe('trial:math');
+    clock.advance(1);
+    expect(kindOf(flow.view)).toBe('trial:letter');
+    runToEnd(flow, clock, 500);
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ stage: 'bothPractice', calibration: null });
+    expect(done[0]?.math.total).toBe(6);
+  });
+
+  it('途中でやめたら、終わっていない練習は通知されない', () => {
+    const { flow, clock, done } = setup('mathPractice', null);
+    flow.start();
+    flow.next();
+    for (let i = 0; i < 5; i++) {
+      clock.advance(1000);
       flow.solved();
       flow.judge(true);
       flow.next();
     }
-    expect(flow.view.kind).toBe('done');
-    if (flow.view.kind === 'done') {
-      expect(flow.view.result.trials).toEqual([]);
-      expect(flow.view.result.calibration?.timeLimit).toBe(1500);
-      expect(flow.view.result.timeLimit).toBe(1500);
+    flow.cancel();
+    clock.advance(10_000);
+    expect(done).toEqual([]);
+  });
+});
+
+describe('Flow 正式モードの区切りごとの保存通知', () => {
+  it('練習が 1 つ終わるたびに通知し、本番では通知しない（文字 → 計算 → 複合）', () => {
+    const done: StageDone[] = [];
+    const { flow, clock } = make({ mode: 'formal', timeLimit: null, onStageDone: (d) => done.push(d) });
+    flow.start();
+    let guard = 0;
+    while (flow.view.kind !== 'done' && guard++ < 800) {
+      const v = flow.view;
+      if (v.kind === 'intro' || v.kind === 'feedback') flow.next();
+      else if (v.kind === 'trial' && v.trial.kind === 'math') {
+        clock.advance(1000);
+        flow.solved();
+      } else if (v.kind === 'trial' && v.trial.kind === 'judge') flow.judge(true);
+      else if (v.kind === 'trial' && v.trial.kind === 'letter') clock.advance(LETTER_MS);
+      else if (v.kind === 'trial') flow.submit([]);
     }
+    expect(done.map((d) => d.stage)).toEqual(['lettersPractice', 'mathPractice', 'bothPractice']);
+    expect(done[1]?.calibration).not.toBeNull();
+  });
+
+  it('途中でやめても、終わった練習は通知済み（保存される）', () => {
+    const done: StageDone[] = [];
+    const { flow, clock } = make({ mode: 'formal', timeLimit: null, onStageDone: (d) => done.push(d) });
+    flow.start();
+    let guard = 0;
+    // 文字練習が終わって、計算練習の説明に着くまで進める
+    while (!(flow.view.kind === 'intro' && flow.view.stage === 'mathPractice') && guard++ < 200) {
+      const v = flow.view;
+      if (v.kind === 'intro' || v.kind === 'feedback') flow.next();
+      else if (v.kind === 'trial' && v.trial.kind === 'letter') clock.advance(LETTER_MS);
+      else if (v.kind === 'trial') flow.submit([]);
+    }
+    flow.cancel();
+    expect(done.map((d) => d.stage)).toEqual(['lettersPractice']);
+  });
+
+  it('クイックは練習を行わず、通知もない', () => {
+    const done: StageDone[] = [];
+    const { flow, clock } = make({ timeLimit: 3000, onStageDone: (d) => done.push(d) });
+    flow.start();
+    expect(kindOf(flow.view)).toBe('trial:math');
+    let guard = 0;
+    while (flow.view.kind !== 'done' && guard++ < 800) {
+      const v = flow.view;
+      if (v.kind === 'feedback') flow.next();
+      else if (v.kind === 'trial' && v.trial.kind === 'math') {
+        clock.advance(500);
+        flow.solved();
+      } else if (v.kind === 'trial' && v.trial.kind === 'judge') flow.judge(true);
+      else if (v.kind === 'trial' && v.trial.kind === 'letter') clock.advance(LETTER_MS);
+      else if (v.kind === 'trial') flow.submit([]);
+    }
+    expect(done).toEqual([]);
   });
 });
 

@@ -21,11 +21,20 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = { reps: 1 };
 
+/** Setup の進み具合。各練習を終えた日時（ISO 8601）。計算練習は calibration の有無で分かる。 */
+export interface PracticeProgress {
+  letters: string | null;
+  both: string | null;
+}
+
+export const EMPTY_PRACTICE: PracticeProgress = { letters: null, both: null };
+
 export interface ExportData {
   app: 'o-span';
   version: 1;
   exportedAt: string;
   calibration: Calibration | null;
+  practice: PracticeProgress;
   settings: Settings;
   sessions: SessionRecord[];
 }
@@ -33,6 +42,7 @@ export interface ExportData {
 const SESSIONS = 'sessions';
 const META = 'meta';
 const CALIBRATION_KEY = 'calibration';
+const PRACTICE_KEY = 'practice';
 
 function wrap<T>(req: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -116,6 +126,29 @@ export class Store {
     await done(tx);
   }
 
+  async getPractice(): Promise<PracticeProgress> {
+    const db = await this.db();
+    const v = (await wrap(db.transaction(META).objectStore(META).get(PRACTICE_KEY))) as Partial<PracticeProgress> | undefined;
+    return { letters: v?.letters ?? null, both: v?.both ?? null };
+  }
+
+  /** 練習 1 つの完了を保存する。1 項目につき 1 件を上書きするので、やり直しても重複しない。 */
+  async markPractice(step: 'letters' | 'both', at: string): Promise<void> {
+    const db = await this.db();
+    const tx = db.transaction(META, 'readwrite');
+    const store = tx.objectStore(META);
+    const current = ((await wrap(store.get(PRACTICE_KEY))) as Partial<PracticeProgress> | undefined) ?? {};
+    store.put({ letters: current.letters ?? null, both: current.both ?? null, [step]: at }, PRACTICE_KEY);
+    await done(tx);
+  }
+
+  async clearPractice(): Promise<void> {
+    const db = await this.db();
+    const tx = db.transaction(META, 'readwrite');
+    tx.objectStore(META).delete(PRACTICE_KEY);
+    await done(tx);
+  }
+
   getSettings(): Settings {
     try {
       const raw = this.storage?.getItem('o-span:settings');
@@ -140,6 +173,7 @@ export class Store {
       version: 1,
       exportedAt: now.toISOString(),
       calibration: await this.getCalibration(),
+      practice: await this.getPractice(),
       settings: this.getSettings(),
       sessions: await this.listSessions(),
     };
@@ -155,6 +189,9 @@ export class Store {
     }
     if (d.calibration) await this.setCalibration(d.calibration);
     else await this.clearCalibration();
+    await this.clearPractice();
+    if (d.practice.letters) await this.markPractice('letters', d.practice.letters);
+    if (d.practice.both) await this.markPractice('both', d.practice.both);
     this.setSettings(d.settings);
     return { sessions: d.sessions.length };
   }
@@ -171,6 +208,14 @@ function safeLocalStorage(): Storage | null {
 function normalizeSettings(v: unknown): Settings {
   const reps = (v as { reps?: unknown } | null)?.reps;
   return { reps: reps === 2 || reps === 3 ? reps : 1 };
+}
+
+function normalizePractice(v: unknown): PracticeProgress {
+  const o = (v ?? {}) as { letters?: unknown; both?: unknown };
+  return {
+    letters: typeof o.letters === 'string' ? o.letters : null,
+    both: typeof o.both === 'string' ? o.both : null,
+  };
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
@@ -203,6 +248,8 @@ export function parseExport(data: unknown): ExportData {
     version: 1,
     exportedAt: typeof data.exportedAt === 'string' ? data.exportedAt : '',
     calibration: data.calibration,
+    // 古い書き出し（practice なし）も読めるようにする
+    practice: normalizePractice(data.practice),
     settings: normalizeSettings(data.settings),
     sessions: data.sessions,
   };

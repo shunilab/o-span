@@ -6,7 +6,12 @@ import { scoreSession, type SessionScore } from './scoring';
 import { TrialRunner, type TrialRecord, type TrialSpec, type TrialView } from './trial';
 
 export type StageId = 'lettersPractice' | 'mathPractice' | 'bothPractice' | 'main' | 'quick';
+/** 成績を残すセッションの種類。 */
 export type Mode = 'quick' | 'formal';
+/** setup は 1 つの練習だけを単独で行う（成績は残さず、練習の完了だけ保存する）。 */
+export type FlowMode = Mode | 'setup';
+/** Setup で単独に行える練習。 */
+export type PracticeStep = 'mathPractice' | 'lettersPractice' | 'bothPractice';
 
 /** キャリブレーションが取れなかったとき（正答 0 件）の制限時間（ms）。 */
 export const FALLBACK_TIME_LIMIT = 6000;
@@ -22,8 +27,20 @@ interface StagePlan {
   scored: boolean;
 }
 
+/** 練習のブロックが 1 つ終わったときの通知。ここで保存すれば、途中でやめても終わった分は残る。 */
+export interface StageDone {
+  stage: StageId;
+  /** 計算練習のときだけ。取れなかった（正答 0 件）なら null。 */
+  calibration: Calibration | null;
+  math: MathTally;
+  letters: { correct: number; total: number };
+  at: string;
+}
+
 export interface FlowResult {
-  mode: Mode;
+  mode: FlowMode;
+  /** setup のときの、行った練習の結果。それ以外は null。 */
+  practice: StageDone | null;
   /** 得点の対象になった試行。 */
   trials: TrialRecord[];
   session: SessionScore;
@@ -57,16 +74,18 @@ export type FlowView =
   | { kind: 'done'; result: FlowResult };
 
 export interface FlowOptions {
-  mode: Mode;
+  mode: FlowMode;
+  /** mode が setup のとき、行う練習。 */
+  step?: PracticeStep;
   /** クイックモードの繰り返し数（系列長 3〜7 を各 reps 回）。 */
   reps: 1 | 2 | 3;
-  /** 保存済みの制限時間（ms）。null ならクイックでも計算練習から始める。 */
+  /** 保存済みの制限時間（ms）。クイックと Setup の複合練習で使う。 */
   timeLimit: number | null;
-  /** true なら計算練習だけ行い、制限時間（キャリブレーション）を取り直して終わる。 */
-  calibrationOnly?: boolean;
   clock: Clock;
   rng: Rng;
   onChange: () => void;
+  /** 練習のブロックが終わるたびに呼ばれる。 */
+  onStageDone?: (done: StageDone) => void;
 }
 
 const MATH_PRACTICE = (n: number): TrialSpec[] =>
@@ -75,34 +94,49 @@ const MATH_PRACTICE = (n: number): TrialSpec[] =>
 const both = (sizes: number[], limit: number): TrialSpec[] =>
   sizes.map((setSize) => ({ setSize, math: true, letters: true, timeLimit: limit }));
 
+const LETTERS_PRACTICE = (sizes: number[]): TrialSpec[] =>
+  sizes.map((setSize) => ({ setSize, math: false, letters: true, timeLimit: null }));
+
 function stagePlans(opts: FlowOptions): StagePlan[] {
-  if (opts.calibrationOnly) {
-    return [{ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) }];
+  const plan = formalPlan(opts.rng);
+  const lettersPractice: StagePlan = {
+    id: 'lettersPractice',
+    intro: true,
+    feedback: true,
+    scored: false,
+    specs: () => LETTERS_PRACTICE(plan.lettersPractice),
+  };
+  const mathPractice: StagePlan = {
+    id: 'mathPractice',
+    intro: true,
+    feedback: true,
+    scored: false,
+    specs: () => MATH_PRACTICE(plan.mathPracticeCount),
+  };
+  const bothPractice: StagePlan = {
+    id: 'bothPractice',
+    intro: true,
+    feedback: true,
+    scored: false,
+    specs: (limit) => both(plan.bothPractice, limit),
+  };
+
+  if (opts.mode === 'setup') {
+    const step = opts.step ?? 'mathPractice';
+    return [step === 'lettersPractice' ? lettersPractice : step === 'bothPractice' ? bothPractice : mathPractice];
   }
   if (opts.mode === 'formal') {
-    const plan = formalPlan(opts.rng);
+    // 原著の順: 文字 → 計算 → 複合 → 本番
     return [
-      {
-        id: 'lettersPractice',
-        intro: true,
-        feedback: true,
-        scored: false,
-        specs: () =>
-          plan.lettersPractice.map((setSize) => ({ setSize, math: false, letters: true, timeLimit: null })),
-      },
-      { id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(plan.mathPracticeCount) },
-      { id: 'bothPractice', intro: true, feedback: true, scored: false, specs: (limit) => both(plan.bothPractice, limit) },
+      lettersPractice,
+      mathPractice,
+      bothPractice,
       { id: 'main', intro: true, feedback: true, scored: true, specs: (limit) => both(plan.main, limit) },
     ];
   }
-  const stages: StagePlan[] = [];
-  if (opts.timeLimit === null) {
-    stages.push({ id: 'mathPractice', intro: true, feedback: true, scored: false, specs: () => MATH_PRACTICE(15) });
-  }
+  // クイックは練習済み（Setup 完了）が前提。本番だけを行う
   const sizes = quickSetSizes(opts.reps, opts.rng);
-  // 計算練習から入った場合は、複合課題に切り替わる前に説明を出す
-  stages.push({ id: 'quick', intro: opts.timeLimit === null, feedback: true, scored: true, specs: (limit) => both(sizes, limit) });
-  return stages;
+  return [{ id: 'quick', intro: false, feedback: true, scored: true, specs: (limit) => both(sizes, limit) }];
 }
 
 /** セッション全体（説明 → 各ブロックの試行 → フィードバック → 結果）の進行を管理する。 */
@@ -119,6 +153,8 @@ export class Flow {
   private readonly scored: TrialRecord[] = [];
   private mathPracticeRecords: TrialRecord[] = [];
   private stageMath: MathTally = { correct: 0, total: 0 };
+  private stageLetters = { correct: 0, total: 0 };
+  private lastStageDone: StageDone | null = null;
   private recallTrials = 0;
   private cancelled = false;
 
@@ -164,6 +200,7 @@ export class Flow {
     this.specs = this.stage.specs(this.timeLimit);
     this.trialIndex = 0;
     this.stageMath = { correct: 0, total: 0 };
+    this.stageLetters = { correct: 0, total: 0 };
     if (this.stage.intro) {
       this.setView({ kind: 'intro', stage: this.stage.id });
     } else {
@@ -197,7 +234,11 @@ export class Flow {
     if (this.cancelled) return;
     if (stage.scored) this.scored.push(record);
     if (stage.id === 'mathPractice') this.mathPracticeRecords.push(record);
-    if (record.spec.letters) this.recallTrials++;
+    if (record.spec.letters) {
+      this.recallTrials++;
+      this.stageLetters.correct += record.score.lettersCorrect;
+      this.stageLetters.total += record.score.setSize;
+    }
     this.stageMath.total += record.math.length;
     this.stageMath.correct += record.math.filter((m) => m.result === 'correct').length;
     // 計算練習の最後の 1 問には、制限時間も添えたまとめを出す
@@ -217,9 +258,24 @@ export class Flow {
       return;
     }
     if (this.stage.id === 'mathPractice') this.finishCalibration();
+    this.finishStage();
     this.stageIndex++;
     if (this.stageIndex < this.stages.length) this.enterStage();
     else this.finish();
+  }
+
+  /** ブロックが 1 つ終わった。ここで通知して、呼び出し側が保存する。 */
+  private finishStage(): void {
+    const done: StageDone = {
+      stage: this.stage.id,
+      calibration: this.stage.id === 'mathPractice' ? this.newCalibration : null,
+      math: { ...this.stageMath },
+      letters: { ...this.stageLetters },
+      at: new Date().toISOString(),
+    };
+    this.lastStageDone = done;
+    // 本番（成績は結果画面のあとで保存）とクイックは、練習の完了ではないので通知しない
+    if (this.stage.id !== 'main' && this.stage.id !== 'quick') this.opts.onStageDone?.(done);
   }
 
   /** 計算練習で正答した試行の反応時間から、本番の制限時間を決める。 */
@@ -239,6 +295,7 @@ export class Flow {
   private finish(): void {
     const result: FlowResult = {
       mode: this.opts.mode,
+      practice: this.opts.mode === 'setup' ? this.lastStageDone : null,
       trials: this.scored,
       session: scoreSession(
         this.scored.map((r) => ({ presented: r.presented, recalled: r.recalled, math: r.math.map((m) => m.result) })),

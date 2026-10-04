@@ -119,6 +119,84 @@ body {
   cursor: pointer;
 }
 
+/* Setup が未完のあいだは、塗りのない輪郭だけの円（閉じた絞り） */
+.aperture-start.locked {
+  background: transparent;
+  box-shadow: inset 0 0 0 3px rgba(141, 155, 171, 0.4);
+  color: var(--mist);
+  cursor: default;
+}
+
+.home-stage {
+  position: relative;
+  width: min(60vw, 300px);
+  aspect-ratio: 1;
+}
+
+.home-stage .aperture {
+  width: 100%;
+}
+
+/* Start の円周上、右下 45° にちょうど重なる（中心が (85%, 85%) の位置） */
+.satellite {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 30%;
+  aspect-ratio: 1;
+  border: 4px solid var(--slate);
+  border-radius: 50%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  background: var(--raised);
+  color: var(--ink);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.satellite-label {
+  font-size: var(--t-body);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.satellite-count {
+  font-size: var(--t-aux);
+  line-height: 1;
+}
+
+/* 次にやること。琥珀はここに移る */
+.satellite.lit {
+  background: var(--aperture);
+  color: var(--slate);
+}
+
+/* 閉じた Start を押したときの答え: Setup の円が 1 回だけ脈打つ */
+.satellite.nudge {
+  animation: nudge 600ms ease-out;
+}
+
+.home-caption.nudge {
+  color: var(--ink);
+  transition: color 150ms linear;
+}
+
+@keyframes nudge {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.22);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
 .aperture-start.expanding {
   transition:
     transform 300ms ease-in,
@@ -190,7 +268,15 @@ body {
 }
 
 .home-top {
-  min-height: 3em;
+  min-height: 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+}
+
+.home-top .link {
+  padding: 0;
 }
 
 .home-middle {
@@ -201,6 +287,10 @@ body {
   justify-content: flex-end;
   gap: 20px;
   padding-bottom: 8vh;
+}
+
+.home-caption {
+  transition: color 600ms ease;
 }
 
 /* 文章の画面（説明・フィードバック・結果・設定）は左寄せ */
@@ -404,6 +494,96 @@ body {
   background: var(--raised-active);
 }
 
+/* Setup: 1 → 2 → 3 の順番がある一覧 */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  max-width: 30em;
+  margin-top: 12px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 72px;
+  padding: 12px 16px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--ink);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.step:active {
+  background: var(--raised-active);
+}
+
+.step-n {
+  flex: none;
+  width: 32px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 0 2px var(--mist);
+  color: var(--mist);
+  font-size: var(--t-body);
+  font-weight: 600;
+  line-height: 1;
+}
+
+/* 次にやる項目だけ琥珀 */
+.step.next .step-n {
+  background: var(--aperture);
+  box-shadow: none;
+  color: var(--slate);
+}
+
+.step.done .step-n {
+  background: var(--ink);
+  box-shadow: none;
+  color: var(--slate);
+}
+
+.step-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.step-title {
+  font-size: var(--t-body);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.step-sub {
+  color: var(--mist);
+  font-size: var(--t-aux);
+  line-height: 1.4;
+}
+
+.step-status {
+  flex: none;
+  color: var(--mist);
+  font-size: var(--t-aux);
+  font-variant-numeric: tabular-nums;
+}
+
+.step.locked {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* 設定 */
 .settings {
   flex: 1;
@@ -494,10 +674,24 @@ body {
     margin-left: 0;
     font-size: 14px;
   }
+
+  /* 閉じた Start は Space でも始まらないので、キー名を出さない */
+  .aperture-start.locked[data-key]::after {
+    content: none;
+  }
+
+  .step[data-key]::after {
+    margin-left: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .aperture-start.expanding {
     transition: none;
+  }
+
+  /* 脈打つ動きはやめ、案内文の色の変化だけで知らせる */
+  .satellite.nudge {
+    animation: none;
   }
 }

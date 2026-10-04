@@ -85,3 +85,14 @@ export function mathErrorsText(speed: number, accuracy: number): string {
 }
 
 export const seconds = (ms: number): string => `${(ms / 1000).toFixed(1)} s`;
+
+export const SETUP_INTRO = {
+  todo: '最初に、次の3つを済ませてください。終わったものはその場で保存され、やり直さなくて済みます。3つとも済むと Start が使えます。',
+  done: '3つとも済んでいます。Start が使えます。やり直したいものは、押してもう一度行えます。',
+};
+
+export const SETUP_STEPS: Record<'mathPractice' | 'lettersPractice' | 'bothPractice', { title: string; sub: string }> = {
+  mathPractice: { title: 'Math practice', sub: '計算だけを15問。本番の制限時間が決まります' },
+  lettersPractice: { title: 'Letters practice', sub: '文字だけを4セット' },
+  bothPractice: { title: 'Math + Letters practice', sub: '計算と文字を3セット（制限時間あり）' },
+};

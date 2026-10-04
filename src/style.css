@@ -1,0 +1,349 @@
+:root {
+  --slate: #1f2b35;
+  --raised: #2a3843;
+  --raised-active: #34454f;
+  --ink: #e9e5da;
+  --mist: #8d9bab;
+  --aperture: #f2b53a;
+  --rose: #d97a6c;
+
+  --font: 'Lexend', 'Hiragino Sans', 'Hiragino Kaku Gothic ProN', 'Yu Gothic', sans-serif;
+
+  --gutter: 20px;
+  --t-stimulus: 112px;
+  --t-formula: 40px;
+  --t-answer: 64px;
+  --t-button: 20px;
+  --t-body: 17px;
+  --t-aux: 14px;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--slate);
+  color: var(--ink);
+  font: 400 var(--t-body) / 1.7 var(--font);
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+  /* 日本語は文節の途中で折り返さない（非対応の環境では通常の折り返し） */
+  word-break: auto-phrase;
+  line-break: strict;
+  text-wrap: pretty;
+}
+
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  touch-action: manipulation;
+}
+
+#app {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right))
+    max(var(--gutter), env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+  overflow: hidden;
+}
+
+.screen {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scroll {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 刺激（式・数字・文字）は中央に置く */
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.formula {
+  font-size: var(--t-formula);
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.answer {
+  font-size: var(--t-answer);
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 開始ボタンと文字の窓は同じ琥珀の円 */
+.aperture {
+  width: min(60vw, 300px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--aperture);
+  color: var(--slate);
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.aperture-letter {
+  font-size: var(--t-stimulus);
+  line-height: 1;
+}
+
+.aperture-start {
+  font-size: 40px;
+  cursor: pointer;
+}
+
+.aperture-start.expanding {
+  transition:
+    transform 300ms ease-in,
+    color 150ms linear;
+  transform: scale(9);
+  color: transparent;
+}
+
+/* 操作は画面の下に集める */
+.actions {
+  display: flex;
+  gap: 12px;
+  padding-top: 12px;
+}
+
+.btn {
+  flex: 1;
+  min-height: 64px;
+  border: 0;
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--ink);
+  font: 600 var(--t-button) / 1.2 var(--font);
+  cursor: pointer;
+}
+
+.btn:active {
+  background: var(--raised-active);
+}
+
+.btn-main {
+  background: var(--ink);
+  color: var(--slate);
+}
+
+.btn-main:active {
+  background: #fff;
+}
+
+.link {
+  border: 0;
+  background: none;
+  padding: 12px 0;
+  color: var(--mist);
+  font: 400 var(--t-body) / 1.2 var(--font);
+  cursor: pointer;
+}
+
+.link:active {
+  color: var(--ink);
+}
+
+:focus-visible {
+  outline: 3px solid var(--aperture);
+  outline-offset: 3px;
+}
+
+/* ホーム */
+.aux {
+  margin: 0;
+  color: var(--mist);
+  font-size: var(--t-aux);
+  line-height: 1.6;
+}
+
+.home-top {
+  min-height: 3em;
+}
+
+.home-middle {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 20px;
+  padding-bottom: 8vh;
+}
+
+.home-bottom {
+  display: flex;
+  justify-content: space-between;
+}
+
+/* 文章の画面（説明・フィードバック・結果・設定）は左寄せ */
+.text {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.text h1 {
+  margin: 0;
+  font-size: var(--t-formula);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.text p {
+  margin: 0;
+  max-width: 30em;
+}
+
+.big {
+  font-size: var(--t-answer);
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.error {
+  color: var(--rose);
+}
+
+.muted {
+  color: var(--mist);
+}
+
+/* 想起 */
+.entered {
+  min-height: 72px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 40px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.entered span {
+  min-width: 1ch;
+}
+
+.recall-space {
+  flex: 1;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.key {
+  min-height: 64px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--ink);
+  font: 600 32px / 1 var(--font);
+  cursor: pointer;
+}
+
+.key:active {
+  background: var(--raised-active);
+}
+
+/* 設定 */
+.settings {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding-bottom: 12px;
+}
+
+.settings h2 {
+  margin: 0 0 4px;
+  font-size: var(--t-body);
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.settings p {
+  margin: 0 0 8px;
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.row + p,
+.row + input + p {
+  margin-top: 12px;
+}
+
+.chip {
+  min-height: 48px;
+  padding: 0 18px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--raised);
+  color: var(--ink);
+  font: 400 var(--t-body) / 1 var(--font);
+  cursor: pointer;
+}
+
+.chip[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--slate);
+  font-weight: 600;
+}
+
+.chip.danger {
+  color: var(--rose);
+}
+
+.history {
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.history li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aperture-start.expanding {
+    transition: none;
+  }
+}

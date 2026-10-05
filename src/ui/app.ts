@@ -33,6 +33,13 @@ import { mapKey, type KeyAction, type KeyContext } from './keys';
 
 type Screen = 'home' | 'setup' | 'flow' | 'settings';
 
+/**
+ * 画面が切り替わった直後の入力を無視する時間（ms）。
+ * ボタンの位置を全画面で揃えているので、ダブルクリックや、時間切れで画面が切り替わる瞬間のクリックが、
+ * 次の画面の同じ位置のボタン（Solved の次の True / False など）に当たってしまうのを防ぐ。
+ */
+export const INPUT_GUARD_MS = 350;
+
 const reducedMotion = (): boolean => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 /** 左に項目名、右に値。warn なら値を警告色にする。 */
@@ -57,6 +64,8 @@ export class App {
   private updateReady = false;
   /** 想起画面の入力表示を描き直す関数（画面ごとに差し替わる）。 */
   private recallDraw: (() => void) | null = null;
+  /** 課題の画面が最後に切り替わった時刻。 */
+  private viewAt = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -294,6 +303,9 @@ export class App {
 
   private apply(action: KeyAction): void {
     const flow = this.flow;
+    // 課題の進行を動かす操作は、画面が切り替わった直後は無視する（Esc や文字入力は対象外）
+    const advancing = action.type === 'primary' || action.type === 'true' || action.type === 'false' || action.type === 'submit';
+    if (advancing && this.screen === 'flow' && this.guarded()) return;
     switch (action.type) {
       case 'primary': {
         if (this.screen === 'home') {
@@ -337,6 +349,16 @@ export class App {
     }
   }
 
+  /** ボタンから課題を進める操作。画面が切り替わった直後なら無視する。 */
+  private act(fn: () => void): void {
+    if (!this.guarded()) fn();
+  }
+
+  /** 画面が切り替わった直後なら true。その間の操作は受け付けない。 */
+  private guarded(): boolean {
+    return performance.now() - this.viewAt < INPUT_GUARD_MS;
+  }
+
   private addLetter(c: string): void {
     if (this.entered.length >= MAX_RECALL) return;
     this.entered.push(c);
@@ -373,6 +395,7 @@ export class App {
     const flow = this.flow;
     if (!flow) return;
     if (flow.view.kind === 'trial' && flow.view.trial.kind === 'recall') this.entered = [];
+    this.viewAt = performance.now();
     if (flow.view.kind === 'done' && !this.saved) {
       this.saved = true;
       void this.persistSession(flow.view.result);
@@ -440,7 +463,7 @@ export class App {
       { class: 'screen' },
       this.quitBar(),
       h('div', { class: 'text' }, h('h1', {}, copy.title), demo, ...copy.body.map((t) => h('p', {}, t))),
-      h('div', { class: 'actions' }, button('Start', 'btn btn-main', () => flow.next(), 'Space')),
+      h('div', { class: 'actions' }, button('Start', 'btn btn-main', () => this.act(() => flow.next()), 'Space')),
     );
   }
 
@@ -452,7 +475,7 @@ export class App {
           'main',
           { class: 'screen' },
           h('div', { class: 'stage' }, h('div', { class: 'formula' }, trial.text)),
-          h('div', { class: 'actions' }, button('Solved', 'btn btn-main', () => flow.solved(), 'Space')),
+          h('div', { class: 'actions' }, button('Solved', 'btn btn-main', () => this.act(() => flow.solved()), 'Space')),
         );
       case 'judge':
         return h(
@@ -462,8 +485,8 @@ export class App {
           h(
             'div',
             { class: 'actions' },
-            button('True', 'btn', () => flow.judge(true), 'T'),
-            button('False', 'btn', () => flow.judge(false), 'F'),
+            button('True', 'btn', () => this.act(() => flow.judge(true)), 'T'),
+            button('False', 'btn', () => this.act(() => flow.judge(false)), 'F'),
           ),
         );
       case 'letter':
@@ -493,7 +516,7 @@ export class App {
         { class: 'actions' },
         button('?', 'btn', () => this.addLetter('?')),
         button('Clear', 'btn', () => this.clearLetter(), '⌫'),
-        button('Enter', 'btn btn-main', () => flow.submit(this.entered), 'Enter'),
+        button('Enter', 'btn btn-main', () => this.act(() => flow.submit(this.entered)), 'Enter'),
       ),
     );
   }
@@ -517,7 +540,7 @@ export class App {
         { class: 'screen' },
         this.quitBar(),
         h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
-        h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next(), 'Space')),
+        h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => this.act(() => flow.next()), 'Space')),
       );
     }
     if (record.spec.letters) rows.push(kv('Letters', `${s.lettersCorrect} / ${s.setSize}`));
@@ -533,7 +556,7 @@ export class App {
       { class: 'screen' },
       this.quitBar(),
       h('div', { class: 'text' }, h('div', { class: 'kv-list' }, ...rows)),
-      h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => flow.next(), 'Space')),
+      h('div', { class: 'actions' }, button('Next', 'btn btn-main', () => this.act(() => flow.next()), 'Space')),
     );
   }
 
@@ -567,7 +590,7 @@ export class App {
       h(
         'div',
         { class: 'actions' },
-        button(r.mode === 'setup' ? 'Setup' : 'Home', 'btn btn-main', () => this.leaveFlow(), 'Space'),
+        button(r.mode === 'setup' ? 'Setup' : 'Home', 'btn btn-main', () => this.act(() => this.leaveFlow()), 'Space'),
       ),
     );
   }
